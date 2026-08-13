@@ -54,6 +54,12 @@ function isExternalDeliveryUrl(value: string | null): value is string {
   }
 }
 
+// Dev-only local codegen runner (packages/codegen/runner.mjs). The apps/web
+// workerd runtime cannot spawn `npm install` / `next build` itself, so
+// generation runs in this separate Node process that stands in for the cloud
+// agent. Production replaces this URL with a real cloud runner.
+const RUNNER_URL = "http://localhost:5174";
+
 export function MobileBuildApp() {
   const [authState, setAuthState] = useState<"checking" | "signed-out" | "signed-in">("checking");
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -66,6 +72,12 @@ export function MobileBuildApp() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [sheet, setSheet] = useState<null | "menu" | "workflow">(null);
+  // Codegen (dev runner) state.
+  const [activeProjectId, setActiveProjectId] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [genProgress, setGenProgress] = useState("");
+  const [genError, setGenError] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
 
   useEffect(() => {
     fetch("/api/auth/session")
@@ -137,7 +149,11 @@ export function MobileBuildApp() {
       const data = await readJsonResponse<{ project?: ProjectRecord; error?: string }>(response, "需求保存失败");
       if (!response.ok || !data.project) throw new Error(data.error || "需求保存失败");
       setSubmittedPrompt(value);
+      setActiveProjectId(data.project.id);
       setPrompt("");
+      setPreviewUrl("");
+      setGenError("");
+      setGenProgress("");
       setProjects((items) => [data.project as ProjectRecord, ...items.filter((item) => item.id !== data.project?.id)]);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "需求保存失败");
@@ -150,6 +166,51 @@ export function MobileBuildApp() {
     setPrompt("");
     setSubmittedPrompt("");
     setSaveError("");
+    setActiveProjectId("");
+    setGenerating(false);
+    setGenProgress("");
+    setGenError("");
+    setPreviewUrl("");
+  }
+
+  // Calls the local codegen runner, then marks the saved project as delivered
+  // with the returned preview URL so the existing external-link row renders it.
+  async function handleGenerate() {
+    if (!submittedPrompt || !activeProjectId || generating) return;
+    setGenError("");
+    setGenProgress("正在调用生成器…");
+    setPreviewUrl("");
+    setGenerating(true);
+    try {
+      const response = await fetch(`${RUNNER_URL}/generate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: submittedPrompt, projectName: activeProjectId }),
+      });
+      const data = await readJsonResponse<{ ok?: boolean; previewUrl?: string; error?: string; buildLog?: string; attempts?: number }>(response, "生成失败");
+      if (!response.ok || !data.ok || !data.previewUrl) {
+        const detail = data.error ? data.error : data.buildLog ? `构建失败：\n${data.buildLog.slice(-400)}` : "生成失败";
+        throw new Error(detail);
+      }
+
+      // Persist delivery so the project list reflects a real external URL.
+      const patch = await fetch("/api/projects", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: activeProjectId, status: "delivered", currentStage: "delivered", previewUrl: data.previewUrl }),
+      });
+      const patchData = await readJsonResponse<{ project?: ProjectRecord; error?: string }>(patch, "更新项目状态失败");
+      if (!patch.ok || !patchData.project) throw new Error(patchData.error || "更新项目状态失败");
+
+      setPreviewUrl(data.previewUrl);
+      setProjects((items) => items.map((item) => (item.id === activeProjectId ? patchData.project as ProjectRecord : item)));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "生成失败";
+      setGenError(message.length > 600 ? `${message.slice(0, 600)}…` : message);
+    } finally {
+      setGenerating(false);
+      setGenProgress("");
+    }
   }
 
   if (authState === "checking") {
@@ -205,7 +266,16 @@ export function MobileBuildApp() {
             <article className="plan-card scope-card">
               <div className="plan-head"><div><span>执行目标</span><h3>{executor === "local" ? "Desktop Agent" : executor === "cloud" ? "Cloud Agent" : "自动选择"}</h3></div><span className="version-pill">DRAFT</span></div>
               <div className="truth-note"><strong>当前没有伪造构建结果</strong><span>未产生代码、测试结论、部署记录或 URL。只有 DeploymentProvider 真正返回外部地址后，项目才可标记为已交付。</span></div>
-              <div className="plan-actions"><button className="secondary-button" onClick={() => { setPrompt(submittedPrompt); setSubmittedPrompt(""); }}>修改需求</button><button className="primary-button" onClick={() => setSheet("workflow")}>查看执行流程<Icon name="chevron" /></button></div>
+              <div className="plan-actions"><button className="primary-button" onClick={handleGenerate} disabled={!submittedPrompt || !activeProjectId || generating}>{generating ? "生成中…" : "生成项目"}<Icon name="spark" /></button><button className="secondary-button" onClick={() => { setPrompt(submittedPrompt); setSubmittedPrompt(""); }} disabled={generating}>修改需求</button><button className="secondary-button" onClick={() => setSheet("workflow")}>查看执行流程<Icon name="chevron" /></button></div>
+              {generating || previewUrl || genError ? (
+                <div className="generation-status">
+                  {previewUrl ? (
+                    <a className="primary-button" href={previewUrl} target="_blank" rel="noreferrer">查看生成结果<Icon name="external" /></a>
+                  ) : null}
+                  {generating ? <p className="gen-progress"><i className="status-dot" />{genProgress || "正在生成…"}</p> : null}
+                  {genError ? <pre className="gen-error" role="alert">{genError}</pre> : null}
+                </div>
+              ) : null}
             </article>
           </div>
         )}

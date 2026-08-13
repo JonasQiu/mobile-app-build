@@ -33,3 +33,6 @@ npm-debug.log*
 # Agent working dirs (session-local, not source)
 .claude/
 .codex/
+
+# codegen runner work dirs (generated projects + built previews)
+.codegen/

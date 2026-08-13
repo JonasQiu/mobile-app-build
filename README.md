@@ -20,6 +20,7 @@
 ## 目录
 
 - `apps/web/`：移动端需求入口（已实现）
+- `packages/codegen/`：Node 代码生成引擎（需求 → OpenAI → Next.js 项目 → 构建 → 预览 URL）+ 本地 HTTP runner
 - `packages/dspec-legacy/`：保留的 `@didi/dspec@1.11.0` 原始快照
 - `packages/mobile-spec/`：`@mobile-app-build/mobile-spec` 通用化工作副本，完成验收前禁止发布
 - `docs/文档中心.md`：配套文档总入口与当前实现状态
@@ -49,11 +50,23 @@
 
 ## 本地运行
 
+两个进程：`apps/web`（移动端入口，跑在 workerd）和 codegen runner（独立 Node 进程，负责真实生成与构建）。
+
 ```bash
+# 1) 移动端 Web
 cd apps/web
 npm ci
-npm run dev
+npm run dev                 # http://localhost:5173
+
+# 2) 代码生成 runner（另开一个终端）
+cd packages/codegen
+npm install
+OPENAI_API_KEY=sk-... CODEGEN_MODEL=gpt-4o node runner.mjs   # http://localhost:5174
 ```
+
+在 Web 端保存一句需求后，点「生成项目」会调用 runner：runner 调 OpenAI 生成多页 Next.js 项目，执行 `npm install` + `next build`，用 `next start` 起一个本地预览，并把可点击的外部预览 URL 写回项目记录。
+
+> 当前 runner 是开发期的本地替代；生产需要真实的云端 runner（见 `docs/`）。`apps/web` 跑在 workerd，无法自己 spawn `npm install` / `next build`，所以生成必须在独立 Node 进程里完成。
 
 使用已约定的 MVP 账号登录。
 

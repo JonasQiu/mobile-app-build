@@ -1,0 +1,21 @@
+{
+  "name": "@mobile-app-build/codegen",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Node codegen engine: requirement -> OpenAI -> Next.js project -> build -> preview URL. Runs in a plain Node process (NOT inside apps/web/workerd).",
+  "bin": {
+    "mbcodegen": "bin/generate.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "start:runner": "node runner.mjs"
+  },
+  "dependencies": {
+    "openai": "^4.77.0",
+    "zod": "^3.23.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
