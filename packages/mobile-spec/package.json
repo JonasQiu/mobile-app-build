@@ -1,0 +1,44 @@
+{
+  "name": "@mobile-app-build/mobile-spec",
+  "version": "1.11.0",
+  "description": "Tool-neutral OpenSpec workflow for multi-platform specification-driven delivery",
+  "private": true,
+  "bin": {
+    "mobile-spec": "bin/mobile-spec.js"
+  },
+  "files": [
+    "schemas",
+    "scripts",
+    "bin",
+    ".agents"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^7.10.1",
+    "js-yaml": "^4.1.0",
+    "mustache": "^4.2.0"
+  },
+  "keywords": [
+    "openspec",
+    "schema",
+    "mobile-spec",
+    "spec-driven"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@inquirer/testing": "^3.3.9",
+    "@nx/js": "^22.7.5",
+    "nx": "^22.7.5"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "release:beta": "node release/beta.js",
+    "release": "node release/stable.js",
+    "release:dry": "node release/stable.js --dry-run",
+    "release:version": "nx release version",
+    "release:changelog": "nx release changelog",
+    "release:publish": "nx release publish"
+  }
+}

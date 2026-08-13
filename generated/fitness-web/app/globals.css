@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --accent: #a9ff57;
+  --accent-strong: #c2ff7a;
+  --muted: #18181b;
+  --border: rgba(255, 255, 255, 0.08);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-muted: var(--muted);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+body {
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 自定义工具：accent 文字 */
+.text-accent {
+  color: var(--accent);
+}
+.bg-accent {
+  background: var(--accent);
+}
+.border-accent {
+  border-color: var(--accent);
+}
+
+/* 自定义滚动条 */
+::selection {
+  background: var(--accent);
+  color: #0a0a0a;
+}
+
+/* 章节标题装饰条 */
+.title-bar::before {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 22px;
+  background: var(--accent);
+  border-radius: 9999px;
+  margin-right: 12px;
+  vertical-align: middle;
+}

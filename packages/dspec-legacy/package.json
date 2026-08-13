@@ -1,0 +1,43 @@
+{
+  "name": "@didi/dspec",
+  "version": "1.11.0",
+  "description": "OpenSpec dspec schema 管理 CLI —— 多平台需求交付流程（H5 / Android / iOS / Harmony）",
+  "bin": {
+    "dspec": "bin/dspec.js"
+  },
+  "files": [
+    "schemas",
+    "scripts",
+    "bin",
+    ".agents"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^7.10.1",
+    "js-yaml": "^4.1.0",
+    "mustache": "^4.2.0"
+  },
+  "keywords": [
+    "openspec",
+    "schema",
+    "dspec",
+    "spec-driven"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@inquirer/testing": "^3.3.9",
+    "@nx/js": "^22.7.5",
+    "nx": "^22.7.5"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "release:beta": "node release/beta.js",
+    "release": "node release/stable.js",
+    "release:dry": "node release/stable.js --dry-run",
+    "release:version": "nx release version",
+    "release:changelog": "nx release changelog",
+    "release:publish": "nx release publish"
+  }
+}

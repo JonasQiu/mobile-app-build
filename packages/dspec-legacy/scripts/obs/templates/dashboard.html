@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+  :root { color-scheme: light; --bg:#f6f7f9; --ink:#17202a; --muted:#687385; --line:#dde3ea; --panel:#fff; --ok:#147a48; --warn:#a15c00; --idle:#7b8493; --blue:#1d5fd1; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:var(--ink); background:var(--bg); }
+  header { padding:28px 36px 18px; background:#101820; color:white; }
+  header h1 { margin:0 0 8px; font-size:26px; font-weight:700; }
+  header p { margin:0; color:#c7d0dc; }
+  main { padding:24px 36px 40px; max-width:1280px; margin:0 auto; }
+  .score-grid, .mini-grid { display:grid; grid-template-columns:repeat(4, minmax(120px, 1fr)); gap:12px; }
+  .mini-grid { grid-template-columns:repeat(3, minmax(110px, 1fr)); margin:16px 0; }
+  .score-card, .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:0 1px 2px rgba(16,24,32,.04); }
+  .score-card { padding:14px; }
+  .score-label { color:var(--muted); font-size:12px; }
+  .score-value { margin-top:6px; font-size:30px; font-weight:760; }
+  .score-bar { height:6px; background:#edf1f5; border-radius:99px; overflow:hidden; margin-top:8px; }
+  .score-bar span { display:block; height:100%; background:var(--blue); }
+  .panel { margin-top:18px; padding:20px; max-width:100%; overflow-x:auto; }
+  .panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; }
+  h2 { margin:0; font-size:18px; }
+  h3 { margin:18px 0 10px; font-size:15px; }
+  .panel p { margin:4px 0 0; color:var(--muted); }
+  .mini-score { width:56px; height:56px; border-radius:8px; display:grid; place-items:center; background:#eaf1ff; color:#164ea8; font-size:24px; font-weight:760; }
+  .phase-row { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 2px; }
+  .phase { border:1px solid var(--line); border-radius:999px; padding:3px 9px; color:var(--muted); background:#fafbfc; }
+  .phase.done { color:var(--ok); border-color:#b8e2cb; background:#effaf4; }
+  .phase.active { color:var(--warn); border-color:#f0d39c; background:#fff8e8; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; background:white; }
+  th, td { border-bottom:1px solid var(--line); padding:9px 10px; text-align:left; vertical-align:top; }
+  th { color:var(--muted); font-size:12px; font-weight:650; background:#f8fafc; }
+  .path { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .hash { color:var(--muted); font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .pill { display:inline-block; min-width:52px; text-align:center; border-radius:999px; padding:2px 7px; font-size:12px; }
+  .pill.ok { color:var(--ok); background:#effaf4; }
+  .pill.warn { color:var(--warn); background:#fff8e8; }
+  .pill.idle { color:var(--idle); background:#f0f2f5; }
+  .muted { color:var(--muted); }
+  .notice { padding:10px 12px; border-left:3px solid var(--warn); background:#fff8e8; color:#6d4a12 !important; }
+  @media (max-width: 860px) { main, header { padding-left:18px; padding-right:18px; } .score-grid, .mini-grid { grid-template-columns:1fr 1fr; } table { font-size:12px; } }
+</style>
+</head>
+<body>
+  <header>
+    <h1>{{title}}</h1>
+    <p>{{projectPath}} · {{generatedAt}}</p>
+  </header>
+  <main>
+    <section class="score-grid">
+      {{#cards}}
+      <section class="score-card {{tone}}">
+        <div class="score-label">{{label}}</div>
+        <div class="score-value">{{value}}</div>
+        <div class="score-bar"><span style="width:{{value}}%"></span></div>
+      </section>
+      {{/cards}}
+    </section>
+
+    <section class="panel">
+      <h2>{{docs.title}}</h2>
+      <p>{{docs.summaryText}}</p>
+      <p class="notice">{{docs.benefitNote}}</p>
+      {{#docs.unattributedText}}<p class="muted">{{docs.unattributedText}}</p>{{/docs.unattributedText}}
+      <h3>分阶段使用与流程结果</h3>
+      <table>
+        <thead><tr><th>阶段</th><th>使用证据</th><th>读取文件</th><th>读取事件</th><th>是否全库读取</th><th>流程结果</th><th>知识收益</th></tr></thead>
+        <tbody>
+          {{#docs.stageRows}}
+          <tr>
+            <td>{{stage}}</td>
+            <td><span class="pill {{statusTone}}">{{statusLabel}}</span></td>
+            <td>{{readFiles}}</td>
+            <td>{{readEvents}}</td>
+            <td>{{fullRead}}</td>
+            <td>{{outcome}}</td>
+            <td>{{benefit}}</td>
+          </tr>
+          {{/docs.stageRows}}
+        </tbody>
+      </table>
+      <h3>文件级读取诊断</h3>
+      {{#docs.hasRows}}
+      <table>
+        <thead><tr><th>状态</th><th>文件</th><th>读取次数</th><th>行范围</th><th>总行数</th><th>大小</th><th>Hash</th></tr></thead>
+        <tbody>
+          {{#docs.rows}}
+          <tr>
+            <td><span class="pill {{statusTone}}">{{statusLabel}}</span></td>
+            <td class="path">{{path}}</td>
+            <td>{{readCount}}</td>
+            <td>{{ranges}}</td>
+            <td>{{lineCount}}</td>
+            <td>{{bytes}}</td>
+            <td class="hash">{{hash}}</td>
+          </tr>
+          {{/docs.rows}}
+        </tbody>
+      </table>
+      {{/docs.hasRows}}
+      {{^docs.hasRows}}
+      <p class="muted">{{docs.emptyText}}</p>
+      {{/docs.hasRows}}
+    </section>
+
+    {{#changes}}
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>{{title}}</h2>
+          <p>{{subtitle}}</p>
+        </div>
+        <div class="mini-score">{{totalScore}}</div>
+      </div>
+      <div class="mini-grid">
+        {{#cards}}
+        <section class="score-card {{tone}}">
+          <div class="score-label">{{label}}</div>
+          <div class="score-value">{{value}}</div>
+          <div class="score-bar"><span style="width:{{value}}%"></span></div>
+        </section>
+        {{/cards}}
+      </div>
+      <div class="phase-row">
+        {{#phases}}<span class="phase {{status}}">{{label}}</span>{{/phases}}
+      </div>
+      <h3>{{docsTitle}}</h3>
+      <p class="notice">{{docs.benefitNote}}</p>
+      {{#docs.unattributedText}}<p class="muted">{{docs.unattributedText}}</p>{{/docs.unattributedText}}
+      <table>
+        <thead><tr><th>阶段</th><th>使用证据</th><th>读取文件</th><th>读取事件</th><th>是否全库读取</th><th>流程结果</th><th>知识收益</th></tr></thead>
+        <tbody>
+          {{#docs.stageRows}}
+          <tr>
+            <td>{{stage}}</td>
+            <td><span class="pill {{statusTone}}">{{statusLabel}}</span></td>
+            <td>{{readFiles}}</td>
+            <td>{{readEvents}}</td>
+            <td>{{fullRead}}</td>
+            <td>{{outcome}}</td>
+            <td>{{benefit}}</td>
+          </tr>
+          {{/docs.stageRows}}
+        </tbody>
+      </table>
+      <h3>文件级读取诊断</h3>
+      {{#docs.hasRows}}
+      <table>
+        <thead><tr><th>状态</th><th>文件</th><th>读取次数</th><th>行范围</th><th>总行数</th><th>大小</th><th>Hash</th></tr></thead>
+        <tbody>
+          {{#docs.rows}}
+          <tr>
+            <td><span class="pill {{statusTone}}">{{statusLabel}}</span></td>
+            <td class="path">{{path}}</td>
+            <td>{{readCount}}</td>
+            <td>{{ranges}}</td>
+            <td>{{lineCount}}</td>
+            <td>{{bytes}}</td>
+            <td class="hash">{{hash}}</td>
+          </tr>
+          {{/docs.rows}}
+        </tbody>
+      </table>
+      {{/docs.hasRows}}
+      {{^docs.hasRows}}
+      <p class="muted">{{docs.emptyText}}</p>
+      {{/docs.hasRows}}
+      {{#hasSessions}}
+      <h3>Session 诊断明细</h3>
+      <table>
+        <thead><tr><th>Session</th><th>读取文件 / 全库文件</th><th>读取事件</th><th>推断归因事件</th><th>最后活动</th></tr></thead>
+        <tbody>
+          {{#sessions}}
+          <tr>
+            <td class="hash">{{sessionId}}</td>
+            <td>{{coverage}}</td>
+            <td>{{readEvents}}</td>
+            <td>{{inferredEvents}}</td>
+            <td>{{lastTs}}</td>
+          </tr>
+          {{/sessions}}
+        </tbody>
+      </table>
+      {{/hasSessions}}
+    </section>
+    {{/changes}}
+  </main>
+</body>
+</html>

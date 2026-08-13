@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build / bundler output (vinext, vite, next, wrangler)
+.next/
+dist/
+.openai/
+.vercel/
+out/
+
+# Cloudflare / local runtime state (contains local D1 db)
+.wrangler/
+
+# TypeScript / tooling
+*.tsbuildinfo
+.turbo/
+coverage/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+.dev.vars*
+
+# Logs
+*.log
+npm-debug.log*
+
+# macOS / editor
+.DS_Store
+.idea/
+
+# Agent working dirs (session-local, not source)
+.claude/
+.codex/

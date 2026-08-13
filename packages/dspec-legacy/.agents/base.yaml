@@ -1,0 +1,12 @@
+name: base-tools
+description: DSpec 所有平台公共复用的文件型 skill 资产
+# 外部 MCP / IDE-only skill（如 cooper、mastergo mcp）不在本清单声明，
+# 由 d-skills 单独安装。
+skills:
+  - dspec-proposal
+  - dspec-design
+  - dspec-task
+  - dspec-coding
+  - dspec-verify
+  - dspec-archive
+  - dspec-change

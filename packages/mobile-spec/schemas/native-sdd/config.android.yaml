@@ -1,0 +1,12 @@
+schema: native-sdd
+platform: android
+rules:
+  design:
+    - 生成 artifact 前，根据 AGENTS.md、CLAUDE.md 中的路由表按任务范围读取主工程 docs/*、模块 docs/*、业务线索引和相关上下文文件获取完整上下文。
+    - design.md 必须明确本次涉及的 Android 模块 / Gradle module、预计修改文件、只读参考文件、禁止修改范围和上下文读取清单。
+    - 整体方案必须包含完整 Android 端侧方案：模块边界、入口链路、状态流转、接口 / 配置 / 埋点、兼容与降级、验证策略；后续章节只做细节展开，不得把关键信息只散落在后续章节。
+  preApply:
+    - 开发前必须按 design.md 的上下文读取清单复核主工程 AGENTS、模块 AGENTS、docs/biz/features、architecture、glossary 等相关文件。
+    - 只修改 design.md 已确认的 Android 模块和文件；涉及跨模块、公共基建或壳工程改动时，先回写 design.md 并确认范围。
+  postArchive:
+    - 归档后运行 Skill `opsx-sync-context-native` 触发上下文同步，将变更设计信息同步回 docs/* 对应文件。

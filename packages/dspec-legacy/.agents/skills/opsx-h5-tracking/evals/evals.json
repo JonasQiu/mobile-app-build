@@ -1,0 +1,481 @@
+{
+  "skill_name": "tracking-dev",
+  "description": "埋点开发 Skill 测评套件",
+  "eval_categories": {
+    "trigger": "命中测试 - 测试 skill 触发准确性",
+    "capability": "能力测试 - 测试核心功能覆盖",
+    "functionality": "功能测试 - 测试实际输出效果"
+  },
+  "evals": [
+    {
+      "id": 1,
+      "category": "trigger",
+      "name": "应该触发：明确提到埋点开发",
+      "prompt": "帮我实现这个埋点 PRD：https://cooper.didichuxing.com/knowledge/2201321764485/2207297448492",
+      "expected_behavior": "应该触发 tracking-dev skill",
+      "assertions": [
+        {
+          "name": "应该使用 skill",
+          "check": "使用了 tracking-dev skill 或按照 skill 流程执行",
+          "type": "contains",
+          "value": "tracking-dev|埋点改动文档|字段映射"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "category": "trigger",
+      "name": "应该触发：提到埋点相关关键词",
+      "prompt": "我需要添加数据上报功能，有一个埋点需求文档",
+      "expected_behavior": "应该触发 tracking-dev skill",
+      "assertions": [
+        {
+          "name": "识别埋点需求",
+          "check": "识别为埋点相关需求",
+          "type": "contains",
+          "value": "埋点|tracking|omega|上报"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "category": "trigger",
+      "name": "应该触发：提到 omega 或 trackEvent",
+      "prompt": "我需要在代码中添加 omega.trackEvent 调用",
+      "expected_behavior": "应该触发 tracking-dev skill",
+      "assertions": [
+        {
+          "name": "识别埋点 SDK",
+          "check": "识别为埋点实现需求",
+          "type": "contains",
+          "value": "埋点|trackEvent|omega"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "category": "trigger",
+      "name": "不应触发：普通功能开发",
+      "prompt": "帮我实现一个用户登录功能",
+      "expected_behavior": "不应触发 tracking-dev skill",
+      "assertions": [
+        {
+          "name": "不应误触发",
+          "check": "不应使用 tracking-dev skill",
+          "type": "not_contains",
+          "value": "埋点改动文档|tracking-dev skill"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "category": "trigger",
+      "name": "不应触发：UI 开发需求",
+      "prompt": "帮我实现一个弹窗组件，包含标题和按钮",
+      "expected_behavior": "不应触发 tracking-dev skill",
+      "assertions": [
+        {
+          "name": "不应误触发",
+          "check": "不应使用 tracking-dev skill",
+          "type": "not_contains",
+          "value": "埋点改动文档|tracking-dev skill"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "category": "capability",
+      "name": "能力：解析 Cooper PRD 文档",
+      "prompt": "请根据这个埋点 PRD 完成开发：https://cooper.didichuxing.com/knowledge/2201321764485/2207297448492",
+      "expected_output": "成功读取并解析 Cooper 文档，提取埋点信息",
+      "assertions": [
+        {
+          "name": "成功读取文档",
+          "check": "读取了 Cooper 文档内容",
+          "type": "contains",
+          "value": "Cooper|readContent|文档"
+        },
+        {
+          "name": "提取埋点信息",
+          "check": "提取了埋点的基本信息",
+          "type": "contains",
+          "value": "Event ID|上报时机|埋点参数"
+        },
+        {
+          "name": "提取多个埋点",
+          "check": "提取了文档中的多个埋点",
+          "type": "regex",
+          "value": "埋点.*\\d+.*个"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "category": "capability",
+      "name": "能力：生成埋点改动文档",
+      "prompt": "我需要实现一个曝光埋点：\n埋点名称：活动卡片曝光\nEvent ID：wyc_pcxz_driteam_card_list_sw\n上报时机：卡片进入可视区域时\n参数：card_status（卡片状态）、tag_text（标签文案）",
+      "expected_output": "生成包含字段映射关系的改动文档",
+      "assertions": [
+        {
+          "name": "生成改动文档",
+          "check": "生成了改动文档",
+          "type": "file_created",
+          "value": "tracking-changes.md"
+        },
+        {
+          "name": "包含基本信息",
+          "check": "包含埋点基本信息",
+          "type": "contains",
+          "value": "Event ID.*wyc_pcxz_driteam_card_list_sw"
+        },
+        {
+          "name": "包含字段映射",
+          "check": "包含参数字段映射关系",
+          "type": "contains",
+          "value": "参数名|字段路径|映射"
+        },
+        {
+          "name": "包含上报时机实现",
+          "check": "包含上报时机实现方式",
+          "type": "contains",
+          "value": "上报时机|实现方式|IntersectionObserver"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "category": "capability",
+      "name": "能力：等待用户确认",
+      "prompt": "根据 PRD 实现埋点：https://cooper.didichuxing.com/knowledge/2201321764485/2207297448492",
+      "expected_output": "生成改动文档后等待用户确认字段映射",
+      "assertions": [
+        {
+          "name": "生成确认问题",
+          "check": "生成了需要确认的问题",
+          "type": "contains",
+          "value": "确认|check|验证|请确认"
+        },
+        {
+          "name": "等待用户响应",
+          "check": "明确表示等待用户确认",
+          "type": "contains",
+          "value": "等待.*确认|确认后.*继续|请确认后"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "category": "capability",
+      "name": "能力：实现曝光埋点代码",
+      "prompt": "在 ActivityCard.vue 中添加卡片曝光埋点，使用 IntersectionObserver",
+      "expected_output": "正确实现曝光埋点代码，包含 observer 逻辑",
+      "files": ["src/pages/carpool-squad/components/ActivityCard.vue"],
+      "assertions": [
+        {
+          "name": "导入 omega",
+          "check": "导入了 omega SDK",
+          "type": "file_contains",
+          "value": "import.*omega.*from.*@didi/driver-biz-sdk"
+        },
+        {
+          "name": "创建 observer",
+          "check": "创建了 IntersectionObserver",
+          "type": "file_contains",
+          "value": "new IntersectionObserver"
+        },
+        {
+          "name": "调用 trackEvent",
+          "check": "在 observer 回调中调用 trackEvent",
+          "type": "file_contains",
+          "value": "omega.trackEvent.*_sw"
+        },
+        {
+          "name": "清理 observer",
+          "check": "在 onBeforeUnmount 中清理 observer",
+          "type": "file_contains",
+          "value": "onBeforeUnmount.*observer"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "category": "capability",
+      "name": "能力：实现点击埋点代码",
+      "prompt": "在按钮点击事件中添加埋点，Event ID: wyc_test_btn_ck，参数: button_text",
+      "expected_output": "在点击处理函数中正确添加埋点代码",
+      "files": ["src/pages/carpool-squad/components/ActivityCard.vue"],
+      "assertions": [
+        {
+          "name": "在点击函数中添加",
+          "check": "在点击处理函数中添加埋点",
+          "type": "file_contains",
+          "value": "handleClick|handleBtnClick.*omega.trackEvent"
+        },
+        {
+          "name": "使用正确的 event ID",
+          "check": "使用 _ck 后缀的 event ID",
+          "type": "file_contains",
+          "value": "omega.trackEvent.*_ck"
+        },
+        {
+          "name": "传递参数",
+          "check": "正确传递埋点参数",
+          "type": "file_contains",
+          "value": "button_text.*:"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "category": "capability",
+      "name": "能力：处理公参",
+      "prompt": "实现一个埋点，参数包含 city_id、uid 等公参",
+      "expected_output": "正确处理公参，不在代码中手动传入",
+      "assertions": [
+        {
+          "name": "识别公参",
+          "check": "识别出公参",
+          "type": "contains",
+          "value": "公参|city_id|uid"
+        },
+        {
+          "name": "说明自动上报",
+          "check": "说明公参由 SDK 自动上报",
+          "type": "contains",
+          "value": "自动上报|无需手动传入|SDK.*自动"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "category": "functionality",
+      "name": "功能：单个曝光埋点完整流程",
+      "prompt": "请根据这个埋点 PRD 完成开发：https://cooper.didichuxing.com/knowledge/2201321764485/2207297448492\n\n只需要实现第一个曝光埋点即可。",
+      "expected_output": "完成从解析到实现的完整流程",
+      "assertions": [
+        {
+          "name": "解析 PRD",
+          "check": "成功解析 PRD 文档",
+          "type": "contains",
+          "value": "Event ID|上报时机"
+        },
+        {
+          "name": "生成文档",
+          "check": "生成改动文档",
+          "type": "file_created",
+          "value": "tracking-changes.md"
+        },
+        {
+          "name": "包含字段映射",
+          "check": "包含字段映射关系",
+          "type": "contains",
+          "value": "字段映射|映射路径"
+        },
+        {
+          "name": "等待确认",
+          "check": "等待用户确认",
+          "type": "contains",
+          "value": "确认|请确认"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "category": "functionality",
+      "name": "功能：批量埋点实现",
+      "prompt": "根据这个 PRD 文档实现所有埋点：https://cooper.didichuxing.com/knowledge/2201321764485/2207297448492",
+      "expected_output": "一次性实现文档中的所有埋点",
+      "assertions": [
+        {
+          "name": "提取所有埋点",
+          "check": "提取了文档中的所有埋点",
+          "type": "regex",
+          "value": "埋点.*\\d+.*个|共.*\\d+.*个埋点"
+        },
+        {
+          "name": "生成完整文档",
+          "check": "生成包含所有埋点的改动文档",
+          "type": "contains",
+          "value": "埋点列表|埋点 \\d+"
+        },
+        {
+          "name": "批量实现",
+          "check": "批量实现多个埋点",
+          "type": "contains",
+          "value": "所有埋点|批量|多个"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "category": "functionality",
+      "name": "功能：处理不同上报时机",
+      "prompt": "实现以下埋点：\n1. 页面曝光埋点（页面加载时上报）\n2. 元素曝光埋点（进入可视区域时上报）\n3. 按钮点击埋点（点击时上报）\n4. 弹窗曝光埋点（弹窗显示时上报）",
+      "expected_output": "正确识别并实现不同的上报时机",
+      "assertions": [
+        {
+          "name": "页面曝光",
+          "check": "识别页面曝光使用 onMounted",
+          "type": "contains",
+          "value": "onMounted|页面加载"
+        },
+        {
+          "name": "元素曝光",
+          "check": "识别元素曝光使用 IntersectionObserver",
+          "type": "contains",
+          "value": "IntersectionObserver|可视区域"
+        },
+        {
+          "name": "点击埋点",
+          "check": "识别点击埋点使用 @click",
+          "type": "contains",
+          "value": "@click|handleClick|点击"
+        },
+        {
+          "name": "弹窗曝光",
+          "check": "识别弹窗曝光使用 watch",
+          "type": "contains",
+          "value": "watch.*visible|弹窗.*展示"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "category": "functionality",
+      "name": "功能：字段映射准确性",
+      "prompt": "实现埋点，参数映射：\n- card_status ← activity.status_text\n- tag_text ← activity.tag\n- activity_id ← activity.activity_id",
+      "expected_output": "准确生成字段映射关系",
+      "assertions": [
+        {
+          "name": "正确映射字段",
+          "check": "字段映射关系正确",
+          "type": "contains",
+          "value": "card_status.*status_text|tag_text.*tag|activity_id.*activity_id"
+        },
+        {
+          "name": "包含映射路径",
+          "check": "包含完整的映射路径",
+          "type": "contains",
+          "value": "activity\\.status_text|activity\\.tag|activity\\.activity_id"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "category": "functionality",
+      "name": "功能：代码质量",
+      "prompt": "实现一个曝光埋点",
+      "expected_output": "生成的代码符合项目规范",
+      "assertions": [
+        {
+          "name": "添加注释",
+          "check": "在埋点上方添加注释",
+          "type": "file_contains",
+          "value": "//.*埋点|//.*曝光"
+        },
+        {
+          "name": "使用可选链",
+          "check": "使用可选链处理可能为空的字段",
+          "type": "file_contains",
+          "value": "\\?\\."
+        },
+        {
+          "name": "清理资源",
+          "check": "在 onBeforeUnmount 中清理 observer",
+          "type": "file_contains",
+          "value": "onBeforeUnmount.*disconnect"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "category": "functionality",
+      "name": "功能：处理枚举值",
+      "prompt": "实现埋点，包含枚举参数：\nck_type: '卡面' | '按钮' | '活动详情查看'\npop_type: 1 | 2 | 3",
+      "expected_output": "正确处理枚举值，透传或转换",
+      "assertions": [
+        {
+          "name": "识别枚举",
+          "check": "识别出枚举参数",
+          "type": "contains",
+          "value": "枚举|enum|ck_type|pop_type"
+        },
+        {
+          "name": "说明处理方式",
+          "check": "说明枚举值的处理方式",
+          "type": "contains",
+          "value": "透传|转换|前端传入"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "category": "functionality",
+      "name": "功能：错误处理",
+      "prompt": "实现埋点，但 PRD 文档信息不完整，缺少上报时机",
+      "expected_output": "主动询问用户缺失的信息",
+      "assertions": [
+        {
+          "name": "识别缺失信息",
+          "check": "识别出信息不完整",
+          "type": "contains",
+          "value": "缺少|不完整|缺失"
+        },
+        {
+          "name": "主动询问",
+          "check": "主动询问用户",
+          "type": "contains",
+          "value": "请提供|请确认|需要.*信息"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "category": "functionality",
+      "name": "功能：生成总结文档",
+      "prompt": "完成埋点开发后生成总结",
+      "expected_output": "生成包含改动详情的总结文档",
+      "assertions": [
+        {
+          "name": "生成总结文档",
+          "check": "生成了总结文档",
+          "type": "file_created",
+          "value": "tracking-implementation-summary.md"
+        },
+        {
+          "name": "包含改动文件",
+          "check": "列出了改动的文件",
+          "type": "contains",
+          "value": "修改文件|改动文件|文件列表"
+        },
+        {
+          "name": "包含验证清单",
+          "check": "包含测试验证清单",
+          "type": "contains",
+          "value": "验证|测试|checklist"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "category": "functionality",
+      "name": "功能：处理二选一模式",
+      "prompt": "实现二选一模式的报名弹窗埋点，包含 squad_types 数组",
+      "expected_output": "正确处理二选一模式的数据结构",
+      "assertions": [
+        {
+          "name": "识别二选一模式",
+          "check": "识别出二选一模式",
+          "type": "contains",
+          "value": "二选一|squad_types|enrollType.*3"
+        },
+        {
+          "name": "处理数组数据",
+          "check": "正确处理 squad_types 数组",
+          "type": "contains",
+          "value": "squad_types\\.find|squad_types\\["
+        }
+      ]
+    }
+  ]
+}

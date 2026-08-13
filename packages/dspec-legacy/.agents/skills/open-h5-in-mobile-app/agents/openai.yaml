@@ -1,0 +1,4 @@
+interface:
+  display_name: "在移动端 App 中打开 H5"
+  short_description: "在 iOS 模拟器或 Android 真机中安装 App 并打开 H5"
+  default_prompt: "使用 $open-h5-in-mobile-app 在移动端宿主 App 中安装或启动应用，并通过 deeplink 打开我的 H5 页面。"

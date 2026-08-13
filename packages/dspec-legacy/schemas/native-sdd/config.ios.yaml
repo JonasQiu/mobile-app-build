@@ -1,0 +1,33 @@
+schema: native-sdd
+platform: ios
+rules:
+  design:
+    - 生成 artifact 前，根据 CLAUDE.md、AGENTS.md 中的路由表按任务范围读取 docs/* 对应文件获取完整上下文。
+    - design.md 必须明确本次涉及的组件仓库、预计修改文件、只读参考文件、禁止修改范围和上下文读取清单。
+  preApply:
+    - 开发前需提供详细的涉及到改动的组件信息列表,只提供需要修改的仓库名称即可
+    - 与用户确认是否需要拉取新分支，如果需要，确认分支命名并创建/切换分支
+    - 确认完改动组件（pod）及其分支名称后回写到design.md中，作为开发准入条件之一
+    - apply 阶段只读主工程和组件仓库的 docs、AGENTS.md、业务线 Index.md，不得提前写入上下文文件
+    - 开发中发现需要同步的稳定信息时，只回写 proposal、specs、design、tasks 等 artifacts；统一在 archive 后由 dspec-ios-sync-context 写入上下文
+  postArchive:
+    - "archive 后运行 dspec-ios-sync-context，将本次变更中已落地且稳定的信息同步回 iOS 组件上下文。"
+    - "iOS 上下文回写优先更新组件仓库 docs/*.md；只有路由、路径、摘要或适用范围发生变化时，才更新组件 AGENTS.md 或业务线 Index.md。"
+    - "业务线 Index.md 仅维护覆盖 Pods、规则入口、阅读顺序、子文档索引和简短摘要；不得写入具体接口、字段、状态机、页面实现或埋点字段。"
+    - "组件 AGENTS.md 仅维护组件内上下文路由；不得承载大段业务链路细节。"
+    - "不得回写 Pods/ 集成副本；只回写真正的本地组件仓库 docs。"
+    - "完整收口顺序:"
+    - "1. archive:归档本次 OpenSpec change。"
+    - "2. dspec-ios-sync-context:按组件 docs / 组件 AGENTS.md / 业务线 Index.md 的路由规则回写稳定上下文。"
+    - "3. submit-demand:仅扫描、提交并 push 本次需求涉及且已在 design.md 确认的组件仓库；不扫描、不提交运行根工作区 / work-space/DiDriver / 壳工程整体状态。"
+    - "submit-demand 不是 artifact,不生成 OpenSpec 文档。执行规则:"
+    - "读取 design.md 中已与 iOS 开发者确认的组件变更清单、只读参考清单、禁止提交范围和分支策略。"
+    - "只扫描 design.md 中确认为需修改组件的子组件仓库 git status。"
+    - "不扫描 work-space/DiDriver 根工作区 git status；根工作区中的未跟踪文件、壳工程文件、Pods、OpenSpec 本地归档产物不作为需求提交判断依据。"
+    - "对照 design.md 已确认组件清单与实际 git status,只允许提交确认组件仓库内的改动。"
+    - "将组件代码改动、dspec-ios-sync-context 产生的组件 docs 改动按对应组件仓库提交。"
+    - "每个仓库 commit 成功后执行 git push;push 失败时保留本地 commit,输出失败仓库和错误信息,停止后续自动提交。"
+    - "iOS开发环境中不提交壳工程 DiDriver 改动。"
+    - "iOS开发环境中不提交 Pods/ 集成副本。"
+    - "不提交未确认组件改动或临时文件。"
+    - "如已确认组件仓库内存在未确认改动、未确认分支名、未跟踪文件或提交范围不清,停止提交并要求人工确认；根工作区噪声不触发停止。"
