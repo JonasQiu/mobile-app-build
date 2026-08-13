@@ -23,7 +23,7 @@ flowchart TD
   J --> K[历史详情中打开页面]
 ```
 
-执行页展示六个阶段：需求、Mobile Spec、Codex、构建、部署、完成。执行中每 3 秒同步百分比、当前 message 和最近事件；历史项目可点击恢复同一详情视图。
+执行页展示六个阶段：需求、Mobile Spec、Codex、构建、部署、完成。执行中每 15 秒同步百分比、当前 message 和最近事件，包含 Codex 生成、文件校验写入、构建修复与部署信息。历史项目可点击恢复同一详情视图，非进行中记录允许删除。
 
 ## 3. 已实现范围
 
@@ -35,6 +35,7 @@ flowchart TD
 - 中立 Next.js 模板、完整文件 manifest、安全路径校验。
 - 可复现依赖安装、生产构建、失败日志修复。
 - Runner 实时 progress/message/events 与历史项目详情。
+- 每个用户最多同时执行 2 个需求；服务端原子占位并拒绝第三个任务。
 - 外部 HTTPS URL 检查与三项交付 evidence。
 
 ## 4. 验收实现与生产边界
@@ -61,11 +62,13 @@ flowchart TD
 
 当前项目状态：
 
-`queued → building → delivered`
+`queued → dispatching → building → delivered`
 
 失败终态：`failed`。`currentStage` 使用：
 
 `requirement | mobile-spec | implementation | build | deployment | delivered | failed`
+
+`dispatching` 是控制站已原子占用并发名额、正在等待 Runner 接受任务的短暂状态；Runner 确认后进入 `building`，明确拒绝时回到原状态，响应未知超过 2 分钟则失败并释放名额。
 
 只有以下条件同时成立才允许保存 `delivered`：
 

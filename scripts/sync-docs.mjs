@@ -16,29 +16,34 @@ function yes(source, pattern) {
   return pattern.test(source) ? "已实现" : "未检测到";
 }
 
-const [app, projects, jobs, runner, generate, manifest, hosting] = await Promise.all([
+const [app, projects, projectDelete, jobs, runner, generate, manifest, serverAuth] = await Promise.all([
   text("apps/web/app/MobileBuildApp.tsx"),
   text("apps/web/app/api/projects/route.ts"),
+  text("apps/web/app/api/projects/[projectId]/route.ts"),
   text("apps/web/app/api/v1/projects/[projectId]/jobs/route.ts"),
   text("packages/codegen/runner.mjs"),
   text("packages/codegen/src/generate.js"),
   text("packages/codegen/src/manifest-schema.js"),
-  text("apps/web/.openai/hosting.json"),
+  text("apps/web/app/lib/server-auth.ts"),
 ]);
 
 const facts = [
   ["历史项目详情", yes(app, /function openProject\(item: ProjectRecord\)/), "历史条目恢复需求、状态、消息与交付入口"],
   ["实时进度 UI", yes(app, /className="live-progress"/), "六阶段、百分比、当前 message、最近事件"],
+  ["15 秒状态同步", yes(app, /POLL_INTERVAL_MS = 15_000/), "统一同步所有进行中项目"],
+  ["Codex 详细事件", yes(runner, /Codex 已返回结构化实现/), "生成、文件校验、写入、构建修复与部署消息"],
+  ["历史记录删除", yes(projectDelete, /export async function DELETE/), "按用户隔离，进行中任务拒绝删除"],
+  ["并发执行上限", yes(jobs, /MAX_ACTIVE_PROJECTS = 2/), "服务端原子占位，每个用户最多两个进行中项目"],
   ["可信状态同步", yes(projects, /executionEvents/), "控制站服务端轮询 Runner，不接受浏览器终态"],
   ["受信任派发", yes(jobs, /CODEX_RUNNER_TOKEN/), "服务端 Bearer token 派发"],
   ["Runner message 流", yes(runner, /function reportProgress\(projectId, event\)/), "progress/message/events，最近 24 条"],
   ["Mobile Spec 硬门禁", yes(generate, /Mobile Spec workflow is required/), "缺少或失败时停止生成"],
   ["交付 evidence", yes(runner, /mobileSpecPassed: true[\s\S]*buildPassed: true[\s\S]*deployPassed: true/), "三项证据齐全才 delivered"],
   ["生成文件安全", yes(manifest, /validateManifest/), "路径、路由、必需文件、外部字体约束"],
-  ["D1 binding", yes(hosting, /"d1"\s*:\s*"DB"/), "项目与会话持久化"],
+  ["D1 persistence", yes(serverAuth, /env\.DB/), "项目、会话与历史记录持久化"],
 ];
 
-const sources = [app, projects, jobs, runner, generate, manifest, hosting].join("\n");
+const sources = [app, projects, projectDelete, jobs, runner, generate, manifest, serverAuth].join("\n");
 const digest = createHash("sha256").update(sources).digest("hex").slice(0, 16);
 const body = `# 实现状态快照
 

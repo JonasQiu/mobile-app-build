@@ -36,6 +36,7 @@ const stalePatterns = [
   [/Cloud Runner、动态源码 checkpoint 和真实部署 Provider/, "不要把已接入 Runner 与未完成 checkpoint 混写"],
   [/首页、分享图片和 `\/preview` 正常访问/, "站内 /preview 已移除"],
   [/当前决策是首个默认实现为 Vercel Preview/, "正式 DeploymentProvider 尚未选定"],
+  [/每 3 秒/, "实时消息已改为每 15 秒同步"],
 ];
 
 for (const path of docs) {

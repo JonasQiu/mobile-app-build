@@ -2,7 +2,7 @@
 
 Mobile Build 是一个移动端网站生成控制台：用户输入一句完整需求，系统通过受信任 Runner 执行 **需求 → Codex → Mobile Spec → 页面实现 → 生产构建 → 部署 → HTTPS URL**。
 
-当前版本已经移除关键词模板、健身示例项目、前端计时假进度、示例日志和站内 `/preview` 伪交付。只有 Mobile Spec、生产构建、部署和公网健康检查全部通过，项目才进入 `delivered`。
+当前版本已经移除关键词模板、健身示例项目、前端计时假进度、示例日志和站内 `/preview` 伪交付。执行页每 15 秒同步 Runner 真实消息，历史记录支持删除，每用户最多同时执行 2 个需求。只有 Mobile Spec、生产构建、部署和公网健康检查全部通过，项目才进入 `delivered`。
 
 ## 当前链路
 
@@ -25,7 +25,7 @@ Mobile Web（OpenAI Sites + D1）
 - 完整原始需求保存，不做关键词分类或固定业务模板匹配。
 - 历史记录点击进入项目详情，恢复需求、状态、消息和交付入口。
 - 六阶段实时进度：需求、Mobile Spec、Codex、构建、部署、完成。
-- Runner 百分比、当前 message 与最近消息流，每 3 秒由服务端可信同步。
+- Runner 百分比、当前 message 与最近消息流，每 15 秒由服务端可信同步。
 - Mobile Spec 是硬门禁；缺少 artifacts 或 gate 失败时停止。
 - `npm ci`、`next build`、构建失败反馈修复和外部 HTTPS 健康检查。
 - 客户端无权把项目标记为已交付或写入 URL。

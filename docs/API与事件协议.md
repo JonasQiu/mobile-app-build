@@ -17,6 +17,7 @@
 | `GET` | `/api/auth/session` | 读取当前用户 |
 | `GET` | `/api/projects` | 查询项目，并为执行中项目同步 Runner 状态 |
 | `POST` | `/api/projects` | 保存完整需求，创建 `queued` 项目 |
+| `DELETE` | `/api/projects/{projectId}` | 删除当前用户的非进行中历史项目 |
 | `PATCH` | `/api/projects` | 始终返回 `403`，禁止浏览器伪造终态 |
 | `POST` | `/api/v1/projects/{projectId}/jobs` | 服务端派发受信任 Runner |
 | `POST` | `/api/v1/projects/{projectId}/delivery` | 兼容 Runner 回调，需要 callback token |
@@ -36,12 +37,16 @@
   "executionProgress": 36,
   "executionMessage": "正在生成 Design 并执行设计评审",
   "executionEvents": [
-    { "id": "...", "at": "2026-08-14T00:00:00Z", "message": "任务已进入执行队列" }
+    { "id": "...", "at": "2026-08-14T00:00:00Z", "stage": "mobile-spec", "kind": "progress", "progress": 4, "message": "任务已进入执行队列" }
   ]
 }
 ```
 
-`executionProgress`、`executionMessage`、`executionEvents` 当前由控制站查询 Runner 后临时附加，不写入 projects 表；项目终态与 URL 才写入 D1。
+`executionProgress`、`executionMessage`、`executionEvents` 当前由控制站查询 Runner 后临时附加，不写入 projects 表；事件可包含 `stage`、`kind`、`progress`。响应还包含 `executionCapacity: { active, max: 2 }`。项目终态与 URL 才写入 D1。
+
+当用户已有 2 个 `dispatching/building` 项目时，`POST /api/projects` 和 jobs 派发返回 `409 EXECUTION_LIMIT_REACHED`。jobs 路由使用单条条件 UPDATE 原子占用名额，防止并发请求绕过计数。
+
+`DELETE /api/projects/{projectId}` 只删除当前用户拥有的记录；`dispatching/building` 项目返回 409，避免 Runner 继续执行但控制面记录消失。
 
 ## 3. Runner API（当前实现）
 

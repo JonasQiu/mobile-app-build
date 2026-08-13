@@ -75,6 +75,41 @@ test("history opens project details and execution view renders live progress mes
   assert.match(app, /onClick=\{\(\) => openProject\(item\)\}/);
   assert.match(app, /className="live-progress"/);
   assert.match(app, /className="live-console"/);
-  assert.match(app, /每 3 秒同步/);
+  assert.match(app, /POLL_INTERVAL_MS = 15_000/);
+  assert.match(app, /每 15 秒同步/);
   assert.doesNotMatch(app, /return isExternalDeliveryUrl\(item\.previewUrl\) \? <a className="project-row"/);
+});
+
+test("history deletion is ownership-scoped and rejects active projects", async () => {
+  const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
+  const deleteRoute = await readFile(new URL("app/api/projects/[projectId]/route.ts", root), "utf8");
+  assert.match(app, /method: "DELETE"/);
+  assert.match(app, /确认删除/);
+  assert.match(deleteRoute, /owner_user_id = \?/);
+  assert.match(deleteRoute, /status NOT IN \('dispatching', 'building'\)/);
+  assert.match(deleteRoute, /进行中的需求不能删除/);
+});
+
+test("server atomically enforces a maximum of two active executions", async () => {
+  const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
+  const projectsRoute = await readFile(new URL("app/api/projects/route.ts", root), "utf8");
+  const jobsRoute = await readFile(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root), "utf8");
+  assert.match(projectsRoute, /MAX_ACTIVE_PROJECTS = 2/);
+  assert.match(projectsRoute, /EXECUTION_LIMIT_REACHED/);
+  assert.match(jobsRoute, /COUNT\(\*\).*status IN \('dispatching', 'building'\)/s);
+  assert.match(jobsRoute, /< \?/);
+  assert.match(jobsRoute, /SET status = 'dispatching'/);
+  assert.match(app, /executionCapacity\.active >= executionCapacity\.max/);
+});
+
+test("Codex implementation progress exposes meaningful runner events", async () => {
+  const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
+  const runner = await readFile(new URL("runner.mjs", codegen), "utf8");
+  const generate = await readFile(new URL("src/generate.js", codegen), "utf8");
+  assert.match(generate, /phase: "complete"/);
+  assert.match(generate, /fileCount/);
+  assert.match(runner, /Codex 正在读取已通过门禁的 Mobile Spec/);
+  assert.match(runner, /Codex 已返回结构化实现/);
+  assert.match(runner, /正在校验 Codex 输出的路径/);
+  assert.match(app, /STAGE_LABELS\[event\.stage/);
 });

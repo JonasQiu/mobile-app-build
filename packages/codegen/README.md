@@ -23,7 +23,7 @@ Runner 必须运行在具备文件系统、子进程和外网能力的独立环�
 - `POST /jobs`：提交异步任务，需要 Bearer token。
 - `GET /jobs/{projectId}`：读取 `status`、`stage`、`progress`、`message`、最近 `events`、错误或交付证据。
 
-状态中的事件只保留最近 24 条且当前为内存数据；正式 Cloud Runner 应持久化到控制面事件库。
+状态中的事件只保留最近 24 条且当前为内存数据；Codex 生成、结构化结果、文件校验写入、构建修复与部署节点都有明确 message。正式 Cloud Runner 应持久化到控制面事件库。
 
 ## 环境变量
 

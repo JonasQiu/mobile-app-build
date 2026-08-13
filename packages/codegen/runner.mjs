@@ -54,7 +54,14 @@ function updateJob(projectId, patch, eventMessage) {
   const message = eventMessage || patch.message || current.message || "";
   const events = Array.isArray(current.events) ? [...current.events] : [];
   if (message && events.at(-1)?.message !== message) {
-    events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), message });
+    events.push({
+      id: crypto.randomUUID(),
+      at: new Date().toISOString(),
+      message,
+      stage: patch.stage || current.stage || "queued",
+      kind: patch.kind || "progress",
+      progress: Number.isFinite(patch.progress) ? patch.progress : current.progress || 0,
+    });
   }
   const next = { ...current, ...patch, message, events: events.slice(-24), updatedAt: new Date().toISOString() };
   jobs.set(projectId, next);
@@ -65,12 +72,29 @@ function reportProgress(projectId, event) {
   const [progress, baseMessage] = PROGRESS[event.stage] || [10, `正在执行 ${event.stage}`];
   const attempt = Number(event.attempt) > 1 ? `（第 ${event.attempt} 次）` : "";
   const gate = event.ok === true ? "，门禁已通过" : event.ok === false ? "，门禁未通过，正在修正" : "";
-  const stage = event.stage.startsWith("spec-") || event.stage === "spec-workflow"
+  const eventStage = String(event.stage || "unknown");
+  const stage = eventStage.startsWith("spec-") || eventStage === "spec-workflow"
     ? "mobile-spec"
-    : event.stage === "llm" || event.stage === "write" || event.stage === "retry"
+    : eventStage === "llm" || eventStage === "write" || eventStage === "retry"
       ? "implementation"
-      : event.stage === "done" ? "build" : event.stage;
-  updateJob(projectId, { status: "running", stage, progress }, `${baseMessage}${attempt}${gate}`);
+      : eventStage === "done" ? "build" : eventStage;
+  let message = `${baseMessage}${attempt}${gate}`;
+  if (event.stage === "llm" && event.phase === "start") {
+    message = `Codex 正在读取已通过门禁的 Mobile Spec，并生成页面源码（第 ${event.attempt} 次）`;
+  } else if (event.stage === "llm" && event.phase === "complete") {
+    message = `Codex 已返回结构化实现：${event.fileCount || 0} 个文件、${event.routeCount || 0} 个导航页面`;
+  } else if (event.stage === "write" && event.phase === "start") {
+    message = "正在校验 Codex 输出的路径、路由、文件数量和外部资源约束";
+  } else if (event.stage === "write" && event.phase === "complete") {
+    message = `Codex 输出校验通过，已安全写入 ${event.fileCount || 0} 个项目文件`;
+  } else if (event.stage === "build" && event.phase === "start") {
+    message = `正在安装锁定依赖并执行生产构建（第 ${event.attempt} 次）`;
+  } else if (event.stage === "done") {
+    message = `生产构建已通过（第 ${event.attempt} 次），准备部署`;
+  } else if (event.stage === "retry") {
+    message = `生产构建未通过，Codex 将读取真实构建日志并开始第 ${Number(event.attempt) + 1} 次修复`;
+  }
+  updateJob(projectId, { status: "running", stage, progress, kind: event.ok === false ? "warning" : "progress" }, message);
 }
 
 function timingSafeEqual(left, right) {

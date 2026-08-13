@@ -13,7 +13,14 @@ type ProjectRow = {
   executionEvents?: RunnerEvent[];
 };
 
-type RunnerEvent = { id?: string; at?: string; message?: string };
+type RunnerEvent = {
+  id?: string;
+  at?: string;
+  message?: string;
+  stage?: string;
+  kind?: string;
+  progress?: number;
+};
 
 type RunnerJob = {
   status?: string;
@@ -25,6 +32,9 @@ type RunnerJob = {
   events?: RunnerEvent[];
   evidence?: { mobileSpecPassed?: boolean; buildPassed?: boolean; deployPassed?: boolean };
 };
+
+const MAX_ACTIVE_PROJECTS = 2;
+const ACTIVE_PROJECT_STATUSES = ["dispatching", "building"];
 
 function validDeliveryUrl(value: unknown) {
   if (typeof value !== "string") return false;
@@ -44,7 +54,7 @@ async function syncRunnerState(userId: string, projects: ProjectRow[]) {
   const token = process.env.CODEX_RUNNER_TOKEN;
   if (!endpoint || !token) return;
   const origin = new URL(endpoint).origin;
-  await Promise.all(projects.filter((project) => project.status === "building").map(async (project) => {
+  await Promise.all(projects.filter((project) => ACTIVE_PROJECT_STATUSES.includes(project.status)).map(async (project) => {
     try {
       const response = await fetch(`${origin}/jobs/${encodeURIComponent(project.id)}`, {
         headers: { authorization: `Bearer ${token}`, accept: "application/json" },
@@ -60,6 +70,9 @@ async function syncRunnerState(userId: string, projects: ProjectRow[]) {
           id: event.id,
           at: event.at,
           message: typeof event.message === "string" ? event.message.slice(0, 600) : undefined,
+          stage: typeof event.stage === "string" ? event.stage.slice(0, 40) : undefined,
+          kind: typeof event.kind === "string" ? event.kind.slice(0, 24) : undefined,
+          progress: Math.max(0, Math.min(100, Number(event.progress) || 0)),
         }))
         : [];
       if (job.status === "failed") {
@@ -86,8 +99,9 @@ async function syncRunnerState(userId: string, projects: ProjectRow[]) {
         return;
       }
       if (job.stage && ["mobile-spec", "implementation", "build", "deployment"].includes(job.stage)) {
-        await getD1().prepare(`UPDATE projects SET current_stage = ?, updated_at = CURRENT_TIMESTAMP
+        await getD1().prepare(`UPDATE projects SET status = 'building', current_stage = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ? AND owner_user_id = ?`).bind(job.stage, project.id, userId).run();
+        project.status = "building";
         project.currentStage = job.stage;
       }
     } catch {
@@ -104,7 +118,24 @@ export async function GET(request: Request) {
     FROM projects WHERE owner_user_id = ? ORDER BY updated_at DESC LIMIT 20`)
     .bind(user.id).all<ProjectRow>();
   await syncRunnerState(user.id, result.results);
-  return Response.json({ projects: result.results }, { headers: { "cache-control": "no-store" } });
+  await getD1().prepare(`UPDATE projects SET status = 'failed', current_stage = 'failed', updated_at = CURRENT_TIMESTAMP
+    WHERE owner_user_id = ? AND status = 'dispatching' AND updated_at < datetime('now', '-2 minutes')`)
+    .bind(user.id).run();
+  for (const project of result.results) {
+    const updatedAt = project.updatedAt.includes("T") ? project.updatedAt : `${project.updatedAt.replace(" ", "T")}Z`;
+    if (project.status === "dispatching" && Date.parse(updatedAt) < Date.now() - 120_000) {
+      project.status = "failed";
+      project.currentStage = "failed";
+      project.executionMessage = "Runner 在 2 分钟内未确认任务，派发占位已释放";
+    }
+  }
+  const capacity = await getD1().prepare(`SELECT COUNT(*) AS active FROM projects
+    WHERE owner_user_id = ? AND status IN ('dispatching', 'building')`)
+    .bind(user.id).first<{ active: number }>();
+  return Response.json({
+    projects: result.results,
+    executionCapacity: { active: Number(capacity?.active) || 0, max: MAX_ACTIVE_PROJECTS },
+  }, { headers: { "cache-control": "no-store" } });
 }
 
 export async function POST(request: Request) {
@@ -114,6 +145,16 @@ export async function POST(request: Request) {
   const name = typeof payload?.name === "string" ? payload.name.trim().slice(0, 100) : "";
   const prompt = typeof payload?.prompt === "string" ? payload.prompt.trim().slice(0, 4000) : "";
   if (!name || !prompt) return jsonError("项目名称和描述不能为空", 400);
+  const capacity = await getD1().prepare(`SELECT COUNT(*) AS active FROM projects
+    WHERE owner_user_id = ? AND status IN ('dispatching', 'building')`)
+    .bind(user.id).first<{ active: number }>();
+  if (Number(capacity?.active) >= MAX_ACTIVE_PROJECTS) {
+    return Response.json({
+      error: "最多只能同时执行 2 个需求，请等待其中一个完成后再提交",
+      code: "EXECUTION_LIMIT_REACHED",
+      executionCapacity: { active: Number(capacity?.active) || MAX_ACTIVE_PROJECTS, max: MAX_ACTIVE_PROJECTS },
+    }, { status: 409, headers: { "cache-control": "no-store" } });
+  }
   const id = `prj_${crypto.randomUUID()}`;
   await getD1().prepare(`INSERT INTO projects (id, owner_user_id, name, prompt, status, current_stage)
     VALUES (?, ?, ?, ?, 'queued', 'requirement')`).bind(id, user.id, name, prompt).run();

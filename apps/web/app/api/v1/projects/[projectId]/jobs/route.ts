@@ -1,12 +1,14 @@
 import { getD1, jsonError, requireSession } from "../../../../../lib/server-auth";
 
-type ProjectRow = { id: string; status: string; prompt: string };
+type ProjectRow = { id: string; status: string; prompt: string; currentStage: string | null };
+
+const MAX_ACTIVE_PROJECTS = 2;
 
 export async function POST(request: Request, context: RouteContext<"/api/v1/projects/[projectId]/jobs">) {
   const user = await requireSession(request);
   if (!user) return jsonError("未登录", 401);
   const { projectId } = await context.params;
-  const project = await getD1().prepare(`SELECT id, status, prompt FROM projects
+  const project = await getD1().prepare(`SELECT id, status, prompt, current_stage AS currentStage FROM projects
     WHERE id = ? AND owner_user_id = ? LIMIT 1`).bind(projectId, user.id).first<ProjectRow>();
   if (!project) return jsonError("项目不存在", 404);
   if (project.status === "delivered") return jsonError("项目已经交付", 409);
@@ -20,6 +22,32 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
       retryable: false,
     }, { status: 503, headers: { "cache-control": "no-store" } });
   }
+
+  let claimedSlot = false;
+  if (project.status === "dispatching") return jsonError("该需求正在派发，请稍后查看实时消息", 409);
+  if (project.status !== "building") {
+    const claim = await getD1().prepare(`UPDATE projects
+      SET status = 'dispatching', current_stage = 'mobile-spec', preview_url = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND owner_user_id = ? AND status = ?
+        AND (SELECT COUNT(*) FROM projects WHERE owner_user_id = ?
+          AND status IN ('dispatching', 'building')) < ?`)
+      .bind(project.id, user.id, project.status, user.id, MAX_ACTIVE_PROJECTS).run();
+    if (!claim.meta.changes) {
+      return Response.json({
+        error: "最多只能同时执行 2 个需求，请等待其中一个完成后再试",
+        code: "EXECUTION_LIMIT_REACHED",
+        executionCapacity: { active: MAX_ACTIVE_PROJECTS, max: MAX_ACTIVE_PROJECTS },
+      }, { status: 409, headers: { "cache-control": "no-store" } });
+    }
+    claimedSlot = true;
+  }
+
+  const releaseClaim = async () => {
+    if (!claimedSlot) return;
+    await getD1().prepare(`UPDATE projects SET status = ?, current_stage = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND owner_user_id = ? AND status = 'dispatching'`)
+      .bind(project.status, project.currentStage, project.id, user.id).run();
+  };
 
   const idempotencyKey = request.headers.get("idempotency-key") || `job-${project.id}`;
   const callbackUrl = new URL(`/api/v1/projects/${encodeURIComponent(project.id)}/delivery`, request.url).toString();
@@ -44,8 +72,8 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
     });
   } catch (error) {
     return Response.json({
-      error: error instanceof Error ? `无法连接云端 Codex Runner：${error.message}` : "无法连接云端 Codex Runner",
-      code: "EXECUTOR_DISPATCH_FAILED",
+      error: error instanceof Error ? `Runner 响应未知：${error.message}。系统将继续同步任务状态，避免重复占用执行名额。` : "Runner 响应未知，系统将继续同步任务状态",
+      code: "EXECUTOR_DISPATCH_UNKNOWN",
       retryable: true,
     }, { status: 502, headers: { "cache-control": "no-store" } });
   }
@@ -55,6 +83,7 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
   } | null;
   const jobId = data?.job?.id;
   if (!response.ok || !jobId) {
+    await releaseClaim();
     return Response.json({
       error: typeof data?.error === "string" ? data.error : data?.error?.message || "云端 Codex Runner 未接受任务",
       code: "EXECUTOR_DISPATCH_FAILED",

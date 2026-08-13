@@ -58,7 +58,7 @@ export async function generate({
 
   while (attempt < MAX_ATTEMPTS) {
     attempt += 1;
-    progress({ stage: "llm", attempt });
+    progress({ stage: "llm", phase: "start", attempt });
     manifest = await callLLM({
       requirement,
       attempt,
@@ -70,14 +70,22 @@ export async function generate({
       designAnchor,
       tasksAnchor,
     });
+    progress({
+      stage: "llm",
+      phase: "complete",
+      attempt,
+      fileCount: Array.isArray(manifest.files) ? manifest.files.length : 0,
+      routeCount: Array.isArray(manifest.navRoutes) ? manifest.navRoutes.length : 0,
+    });
 
-    progress({ stage: "write", attempt });
+    progress({ stage: "write", phase: "start", attempt });
     await writeManifest(outDir, manifest);
+    progress({ stage: "write", phase: "complete", attempt, fileCount: Array.isArray(manifest.files) ? manifest.files.length : 0 });
 
-    progress({ stage: "build", attempt });
+    progress({ stage: "build", phase: "start", attempt });
     lastBuild = await runBuild(outDir);
     if (lastBuild.ok) {
-      progress({ stage: "done", attempt });
+      progress({ stage: "done", phase: "complete", attempt });
       return {
         ok: true,
         outDir,
@@ -89,7 +97,7 @@ export async function generate({
       };
     }
     prevBuildError = lastBuild.log;
-    progress({ stage: "retry", attempt, buildOk: false });
+    progress({ stage: "retry", phase: "start", attempt, buildOk: false });
   }
 
   return {

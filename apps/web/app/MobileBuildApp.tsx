@@ -14,8 +14,12 @@ type ProjectRecord = {
   updatedAt: string;
   executionProgress?: number;
   executionMessage?: string;
-  executionEvents?: Array<{ id?: string; at?: string; message?: string }>;
+  executionEvents?: Array<{ id?: string; at?: string; message?: string; stage?: string; kind?: string; progress?: number }>;
 };
+
+type ExecutionCapacity = { active: number; max: number };
+
+const POLL_INTERVAL_MS = 15_000;
 
 const EXAMPLES = [
   "做一个极简的个人记账网站，可按月份查看支出",
@@ -71,8 +75,8 @@ async function readJsonResponse<T>(response: Response, fallbackMessage: string):
   }
 }
 
-function Icon({ name }: { name: "menu" | "spark" | "send" | "chevron" | "x" | "plus" | "logout" | "external" }) {
-  const glyphs = { menu: "☰", spark: "✦", send: "↑", chevron: "›", x: "×", plus: "+", logout: "↪", external: "↗" };
+function Icon({ name }: { name: "menu" | "spark" | "send" | "chevron" | "x" | "plus" | "logout" | "external" | "trash" }) {
+  const glyphs = { menu: "☰", spark: "✦", send: "↑", chevron: "›", x: "×", plus: "+", logout: "↪", external: "↗", trash: "⌫" };
   return <span aria-hidden="true" className={`icon icon-${name}`}>{glyphs[name]}</span>;
 }
 
@@ -94,15 +98,19 @@ export function MobileBuildApp() {
   const [prompt, setPrompt] = useState("");
   const [submittedPrompt, setSubmittedPrompt] = useState("");
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const [executionCapacity, setExecutionCapacity] = useState<ExecutionCapacity>({ active: 0, max: 2 });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [sheet, setSheet] = useState<null | "menu" | "workflow">(null);
   const [activeProjectId, setActiveProjectId] = useState("");
-  const [generating, setGenerating] = useState(false);
   const [genProgress, setGenProgress] = useState("");
   const [genError, setGenError] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
+  const [deletingProjectId, setDeletingProjectId] = useState("");
+  const [deleteError, setDeleteError] = useState("");
   const activeProject = projects.find((item) => item.id === activeProjectId) ?? null;
+  const generating = ["dispatching", "building"].includes(activeProject?.status || "");
+  const hasActiveProjects = projects.some((item) => ["dispatching", "building"].includes(item.status));
 
   useEffect(() => {
     fetch("/api/auth/session")
@@ -121,11 +129,37 @@ export function MobileBuildApp() {
     if (authState !== "signed-in") return;
     fetch("/api/projects")
       .then((response) => response.ok
-        ? readJsonResponse<{ projects: ProjectRecord[] }>(response, "无法读取项目")
-        : { projects: [] })
-      .then((data) => setProjects(data.projects ?? []))
+        ? readJsonResponse<{ projects: ProjectRecord[]; executionCapacity?: ExecutionCapacity }>(response, "无法读取项目")
+        : { projects: [], executionCapacity: { active: 0, max: 2 } })
+      .then((data) => {
+        setProjects(data.projects ?? []);
+        if (data.executionCapacity) setExecutionCapacity(data.executionCapacity);
+      })
       .catch(() => setProjects([]));
   }, [authState]);
+
+  useEffect(() => {
+    if (authState !== "signed-in" || !hasActiveProjects) return;
+    let cancelled = false;
+    const sync = async () => {
+      try {
+        const response = await fetch("/api/projects", { headers: { accept: "application/json" } });
+        const snapshot = await readJsonResponse<{ projects?: ProjectRecord[]; executionCapacity?: ExecutionCapacity; error?: string }>(response, "读取执行状态失败");
+        if (!response.ok) throw new Error(snapshot.error || "读取执行状态失败");
+        if (cancelled) return;
+        const items = snapshot.projects ?? [];
+        setProjects(items);
+        if (snapshot.executionCapacity) setExecutionCapacity(snapshot.executionCapacity);
+      } catch (error) {
+        if (!cancelled) setGenError(error instanceof Error ? error.message : "读取执行状态失败");
+      }
+    };
+    const timer = window.setInterval(() => void sync(), POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [authState, hasActiveProjects]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -193,7 +227,6 @@ export function MobileBuildApp() {
     setSubmittedPrompt("");
     setSaveError("");
     setActiveProjectId("");
-    setGenerating(false);
     setGenProgress("");
     setGenError("");
     setPreviewUrl("");
@@ -205,42 +238,39 @@ export function MobileBuildApp() {
     setPreviewUrl(isExternalDeliveryUrl(item.previewUrl) ? item.previewUrl : "");
     setGenError(item.status === "failed" ? item.executionMessage || "该任务执行失败，可重新发起构建。" : "");
     setGenProgress(item.executionMessage || STAGE_LABELS[item.currentStage || ""] || item.status);
-    setGenerating(item.status === "building");
     setSheet(null);
-    if (item.status === "building") {
-      void monitorProject(item.id)
-        .catch((error) => setGenError(error instanceof Error ? error.message : "读取执行状态失败"))
-        .finally(() => setGenerating(false));
-    }
   }
 
-  async function monitorProject(projectId: string) {
-    for (let attempt = 0; attempt < 200; attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 3000));
-      const poll = await fetch("/api/projects", { headers: { accept: "application/json" } });
-      const snapshot = await readJsonResponse<{ projects?: ProjectRecord[]; error?: string }>(poll, "读取执行状态失败");
-      if (!poll.ok) throw new Error(snapshot.error || "读取执行状态失败");
-      const items = snapshot.projects ?? [];
-      setProjects(items);
-      const current = items.find((item) => item.id === projectId);
-      if (!current) throw new Error("项目状态已丢失");
-      setGenProgress(current.executionMessage || STAGE_LABELS[current.currentStage || ""] || `正在执行：${current.currentStage || current.status}`);
-      if (current.status === "failed") throw new Error(current.executionMessage || `真实执行失败（阶段：${current.currentStage || "unknown"}）`);
-      if (current.status === "delivered") {
-        if (!isExternalDeliveryUrl(current.previewUrl)) throw new Error("执行器未返回通过校验的 HTTPS 部署地址");
-        setPreviewUrl(current.previewUrl);
-        return;
-      }
+  async function deleteProject(item: ProjectRecord) {
+    if (["dispatching", "building"].includes(item.status) || deletingProjectId) return;
+    if (!window.confirm(`确认删除“${item.name}”吗？删除后无法恢复。`)) return;
+    setDeleteError("");
+    setDeletingProjectId(item.id);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+      const data = await readJsonResponse<{ deleted?: boolean; error?: string }>(response, "删除项目失败");
+      if (!response.ok || !data.deleted) throw new Error(data.error || "删除项目失败");
+      setProjects((items) => items.filter((project) => project.id !== item.id));
+      if (activeProjectId === item.id) resetRequest();
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "删除项目失败");
+    } finally {
+      setDeletingProjectId("");
     }
-    throw new Error("任务仍在执行，请稍后从项目列表查看状态");
   }
 
   async function runProject(projectId: string) {
-    if (!projectId || generating) return;
+    if (!projectId) return;
     setGenError("");
     setGenProgress("正在派发 Codex 任务…");
     setPreviewUrl("");
-    setGenerating(true);
+    setProjects((items) => items.map((item) => item.id === projectId ? {
+      ...item,
+      status: "dispatching",
+      currentStage: "mobile-spec",
+      executionProgress: 2,
+      executionMessage: "正在向受信任 Runner 派发任务",
+    } : item));
     try {
       const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/jobs`, {
         method: "POST",
@@ -248,16 +278,31 @@ export function MobileBuildApp() {
         body: JSON.stringify({}),
       });
       const data = await readJsonResponse<{ job?: { id: string }; error?: string; code?: string }>(response, "Codex 任务派发失败");
-      if (!response.ok || !data.job) throw new Error(data.error || "Codex 任务派发失败");
+      if (!response.ok || !data.job) {
+        if (data.code !== "EXECUTOR_DISPATCH_UNKNOWN") {
+          setProjects((items) => items.map((item) => item.id === projectId ? {
+            ...item,
+            status: "queued",
+            currentStage: "requirement",
+            executionProgress: 0,
+            executionMessage: undefined,
+          } : item));
+        }
+        throw new Error(data.error || "Codex 任务派发失败");
+      }
 
+      setExecutionCapacity((capacity) => ({ ...capacity, active: Math.min(capacity.max, capacity.active + 1) }));
       setGenProgress("任务已进入云端执行队列…");
-      await monitorProject(projectId);
+      setProjects((items) => items.map((item) => item.id === projectId ? {
+        ...item,
+        status: "building",
+        currentStage: "mobile-spec",
+        executionProgress: 4,
+        executionMessage: "任务已进入云端执行队列，等待下一次 15 秒同步",
+      } : item));
     } catch (error) {
       const message = error instanceof Error ? error.message : "生成失败";
       setGenError(message.length > 600 ? `${message.slice(0, 600)}…` : message);
-    } finally {
-      setGenerating(false);
-      setGenProgress("");
     }
   }
 
@@ -265,12 +310,14 @@ export function MobileBuildApp() {
     void runProject(activeProjectId);
   }
 
-  const currentStageIndex = stageIndex(activeProject?.currentStage || (previewUrl ? "delivered" : "requirement"));
+  const deliveryUrl = isExternalDeliveryUrl(activeProject?.previewUrl || null) ? activeProject.previewUrl : previewUrl;
+  const currentStageIndex = stageIndex(activeProject?.currentStage || (deliveryUrl ? "delivered" : "requirement"));
   const progressValue = activeProject?.status === "delivered"
     ? 100
     : Math.max(0, Math.min(99, activeProject?.executionProgress ?? (generating ? 5 : 0)));
-  const liveMessage = activeProject?.executionMessage || genProgress || (previewUrl ? "部署和健康检查均已通过" : "等待开始真实构建");
+  const liveMessage = activeProject?.executionMessage || genProgress || (deliveryUrl ? "部署和健康检查均已通过" : "等待开始真实构建");
   const liveEvents = activeProject?.executionEvents?.filter((event) => event.message).slice(-6).reverse() ?? [];
+  const capacityFull = executionCapacity.active >= executionCapacity.max;
 
   if (authState === "checking") {
     return <main className="auth-shell loading-shell"><div className="brand-mark"><Icon name="spark" /></div><div className="loading-line"><span /></div></main>;
@@ -320,7 +367,7 @@ export function MobileBuildApp() {
             <div className="message-user"><p>{submittedPrompt}</p></div>
             <div className="message-agent">
               <div className="agent-avatar"><Icon name="spark" /></div>
-              <div><p className="agent-label">{activeProject ? activeProject.name : "需求已保存"}</p><p>{activeProject?.status === "delivered" ? "该历史项目已完成，可查看执行记录和交付页面。" : activeProject?.status === "building" ? "该项目正在真实执行，下面会持续同步进度与消息。" : "已原样保存，没有关键词分类或模板替换。"}</p></div>
+              <div><p className="agent-label">{activeProject ? activeProject.name : "需求已保存"}</p><p>{activeProject?.status === "delivered" ? "该历史项目已完成，可查看执行记录和交付页面。" : ["dispatching", "building"].includes(activeProject?.status || "") ? "该项目正在真实执行，下面会每 15 秒同步进度与消息。" : "已原样保存，没有关键词分类或模板替换。"}</p></div>
             </div>
             <article className="plan-card scope-card">
               <div className="plan-head"><div><span>项目执行</span><h3>{activeProject?.status === "delivered" ? "交付完成" : activeProject?.status === "failed" ? "执行失败" : generating ? "正在构建" : "准备执行"}</h3></div><span className={`version-pill ${activeProject?.status === "failed" ? "failed" : ""}`}>{progressValue}%</span></div>
@@ -333,13 +380,13 @@ export function MobileBuildApp() {
                 })}
               </div>
               <section className="live-console" aria-live="polite">
-                <div className="console-head"><span><i className={generating ? "status-dot" : "status-dot quiet"} />实时消息</span><small>{activeProject?.status === "building" ? "每 3 秒同步" : "最后状态"}</small></div>
+                <div className="console-head"><span><i className={generating ? "status-dot" : "status-dot quiet"} />实时消息</span><small>{["dispatching", "building"].includes(activeProject?.status || "") ? "每 15 秒同步" : "最后状态"}</small></div>
                 <p className="console-current">{liveMessage}</p>
-                {liveEvents.length ? <ol>{liveEvents.map((event, index) => <li key={event.id || `${event.at}-${index}`}><time>{formatEventTime(event.at)}</time><span>{event.message}</span></li>)}</ol> : <p className="console-empty">开始执行后，这里会展示 Mobile Spec、Codex、构建和部署消息。</p>}
+                {liveEvents.length ? <ol>{liveEvents.map((event, index) => <li className={event.kind === "warning" ? "warning" : ""} key={event.id || `${event.at}-${index}`}><time>{formatEventTime(event.at)}</time><span><b>{STAGE_LABELS[event.stage || ""] || event.stage || "执行器"}</b>{event.message}</span></li>)}</ol> : <p className="console-empty">开始执行后，这里会展示 Mobile Spec 门禁、Codex 源码生成、文件写入、构建修复和部署健康检查的真实消息。</p>}
               </section>
               {genError ? <pre className="gen-error" role="alert">{genError}</pre> : null}
               <div className="plan-actions">
-                {previewUrl ? <a className="primary-button" href={previewUrl} target="_blank" rel="noreferrer">打开交付页面<Icon name="external" /></a> : <button className="primary-button" onClick={handleGenerate} disabled={!submittedPrompt || !activeProjectId || generating}>{generating ? "执行中" : activeProject?.status === "failed" ? "重新执行" : "开始真实构建"}<Icon name="spark" /></button>}
+                {deliveryUrl ? <a className="primary-button" href={deliveryUrl} target="_blank" rel="noreferrer">打开交付页面<Icon name="external" /></a> : <button className="primary-button" onClick={handleGenerate} disabled={!submittedPrompt || !activeProjectId || generating || capacityFull}>{generating ? "执行中" : activeProject?.status === "failed" ? "重新执行" : "开始真实构建"}<Icon name="spark" /></button>}
                 <button className="secondary-button" onClick={() => setSheet("workflow")}>流程说明<Icon name="chevron" /></button>
               </div>
             </article>
@@ -348,8 +395,8 @@ export function MobileBuildApp() {
       </section>
 
       <form className="composer" onSubmit={handlePrompt}>
-        <div className="composer-inner"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="输入完整需求；可同时粘贴相关链接…" rows={1} aria-label="项目需求" /><button type="submit" disabled={!prompt.trim() || saving} aria-label="保存需求"><Icon name="send" /></button></div>
-        <div className="composer-meta"><span><i className="status-dot" />{saving ? "正在保存" : "只保存原始需求"}</span><span>{saveError || "不会匹配模板"}</span></div>
+        <div className="composer-inner"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={capacityFull ? "已有 2 个需求执行中，请等待完成…" : "输入完整需求；可同时粘贴相关链接…"} rows={1} aria-label="项目需求" disabled={capacityFull} /><button type="submit" disabled={!prompt.trim() || saving || capacityFull} aria-label="保存需求"><Icon name="send" /></button></div>
+        <div className="composer-meta"><span><i className="status-dot" />{saving ? "正在保存" : `只保存原始需求 · 执行中 ${executionCapacity.active}/${executionCapacity.max}`}</span><span>{saveError || (capacityFull ? "达到并发上限" : "不会匹配模板")}</span></div>
       </form>
 
       {sheet ? <button className="sheet-backdrop" aria-label="关闭面板" onClick={() => setSheet(null)} /> : null}
@@ -359,8 +406,9 @@ export function MobileBuildApp() {
           <div className="sheet-title"><div><p className="eyebrow">WORKSPACE</p><h3>需求与账户</h3></div><button onClick={() => setSheet(null)}><Icon name="x" /></button></div>
           <div className="account-row"><div className="account-avatar">J</div><div><strong>{user?.username}</strong><span>MVP 本地账户</span></div><button aria-label="退出登录" onClick={handleLogout}><Icon name="logout" /></button></div>
           <div className="recent-projects">
-            <div className="list-heading"><span>已保存需求</span><small>{projects.length}</small></div>
-            {projects.length ? projects.slice(0, 12).map((item) => <button className={`project-row ${item.id === activeProjectId ? "active" : ""}`} type="button" onClick={() => openProject(item)} key={item.id}><span>{item.name.slice(0, 1)}</span><div><strong>{item.name}</strong><small>{item.executionMessage || (isExternalDeliveryUrl(item.previewUrl) ? "已交付 · 点击查看详情" : STAGE_LABELS[item.currentStage || ""] || item.status)}</small></div><Icon name="chevron" /></button>) : <p className="empty-list">保存第一条完整需求后会显示在这里。</p>}
+            <div className="list-heading"><span>已保存需求</span><small>{executionCapacity.active}/{executionCapacity.max} 执行中 · 共 {projects.length}</small></div>
+            {deleteError ? <p className="history-error" role="alert">{deleteError}</p> : null}
+            {projects.length ? projects.slice(0, 12).map((item) => <div className={`project-row ${item.id === activeProjectId ? "active" : ""}`} key={item.id}><button className="project-open" type="button" onClick={() => openProject(item)}><span>{item.name.slice(0, 1)}</span><div><strong>{item.name}</strong><small>{item.executionMessage || (isExternalDeliveryUrl(item.previewUrl) ? "已交付 · 点击查看详情" : STAGE_LABELS[item.currentStage || ""] || item.status)}</small></div></button><button className="project-delete" type="button" disabled={["dispatching", "building"].includes(item.status) || deletingProjectId === item.id} onClick={() => void deleteProject(item)} aria-label={`删除项目 ${item.name}`} title={["dispatching", "building"].includes(item.status) ? "进行中的需求不能删除" : "删除历史记录"}><Icon name="trash" /></button></div>) : <p className="empty-list">保存第一条完整需求后会显示在这里。</p>}
           </div>
         </aside>
       ) : null}
