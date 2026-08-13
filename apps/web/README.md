@@ -1,100 +1,54 @@
 # Mobile Build Web
 
-Mobile Build 的移动端 Web MVP。提供账号登录、完整需求保存、执行目标偏好和项目记录。
+移动端控制站，负责登录、需求与历史记录、任务派发、Runner 状态同步、实时进度/message 和交付 URL 展示。它不执行 Codex、文件写入、依赖安装或构建。
 
-页面不再根据关键词生成方案，也不展示虚构的文件、日志、阶段和站内预览。只有控制面收到真实 Mobile Spec、执行器与 DeploymentProvider 事件后，才展示构建和独立 URL。完整边界见 [MVP 产品说明](../../docs/mvp-product-spec.md)。
+## 用户能力
 
-## Prerequisites
+- 输入完整需求并创建项目。
+- 从历史列表点击进入任一项目详情。
+- 查看六阶段进度、百分比、当前 message 和最近事件。
+- 执行中每 3 秒刷新一次服务端可信状态。
+- 交付完成后从详情打开独立 HTTPS 页面。
+- 失败项目显示真实失败信息并允许重新执行。
 
-- Node.js `>=22.13.0`
+## 安全边界
 
-## 本地启动
+- 浏览器只能创建项目和请求派发任务。
+- `PATCH /api/projects` 始终拒绝客户端写入终态。
+- 控制站服务端使用 `CODEX_RUNNER_TOKEN` 拉取 Runner 状态。
+- 只有 `mobileSpecPassed`、`buildPassed`、`deployPassed` 和外部 HTTPS URL 同时有效，D1 才记录 `delivered`。
+- 站内 `/preview`、localhost 和控制站自身域名都不能作为交付 URL。
+
+## 技术形态
+
+- Next.js App Router 风格页面与 Route Handlers。
+- vinext / Vite 输出 Cloudflare Workers 兼容产物。
+- Cloudflare D1 保存 users、sessions 和 projects。
+- `.openai/hosting.json` 记录 Sites project 与逻辑 `DB` binding。
+- OpenAI Sites 外层访问控制 + 应用内 MVP Session。
+
+## 运行与验证
+
+要求 Node.js `>=22.13.0`。
 
 ```bash
 npm ci
 npm run dev
 npm run build
+npm run lint
+node --test tests/*.test.mjs
 ```
 
-This starter does not use `wrangler.jsonc`.
+常用环境变量：
 
-## 技术形态
+| 变量 | 用途 |
+|---|---|
+| `CODEX_RUNNER_URL` | Runner 的 HTTPS `/jobs` 地址 |
+| `CODEX_RUNNER_TOKEN` | 控制站调用 Runner 的 Bearer token |
+| `RUNNER_CALLBACK_TOKEN` | 兼容可信回调接口；当前线上主要使用主动拉取 |
 
-- Next.js App Router 风格页面与 Route Handlers
-- vinext / Vite 构建 Cloudflare Workers 兼容产物
-- Cloudflare D1 + Drizzle schema 和 migration
-- `.openai/hosting.json` 声明 Sites 项目和 D1 binding
-- `vite.config.ts` 在本地模拟 binding
+配套文档：
 
-## Sites 身份 Header
-
-Signed-in visitors receive both `oai-authenticated-user-id` and `oai-authenticated-user-email`. Private Sites require every visitor to sign in; public Sites may also have anonymous visitors, for whom neither header is present.
-
-The user ID is stable for the same user on the same Site and different across Sites. Email and name are intended for display or contact purposes.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const userId = requestHeaders.get("oai-authenticated-user-id");
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
-```
-
-## Optional Dispatch-Owned ChatGPT Sign-In
-
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
-
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
-
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
-
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## 常用命令
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: 构建并检查“无模板、无内置预览”契约
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## 配套文档
-
-- [文档中心](../../docs/README.md)
-- [总体技术方案](../../docs/technical-architecture.md)
-- [开发、验证与部署手册](../../docs/development-deployment-guide.md)
+- [文档中心](../../docs/文档中心.md)
+- [API 与事件协议](../../docs/API与事件协议.md)
+- [开发、验证与部署手册](../../docs/开发验证与部署手册.md)

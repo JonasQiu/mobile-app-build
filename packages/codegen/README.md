@@ -1,47 +1,53 @@
 # @mobile-app-build/codegen
 
-Node 执行器：**一句需求 → Mobile Spec → OpenAI 代码生成 → 可复现安装 → Next.js 生产构建**。
+受信任 Node Runner：**需求 → Codex/OpenAI → Mobile Spec → Next.js 源码 → 可复现构建 → DeploymentProvider → HTTPS 健康检查**。
 
-它运行在独立 Node 进程中，不能放进 `apps/web` 的 Cloudflare Worker。Worker 只保存项目与任务状态；Cloud Runner 负责文件、子进程和部署。
+Runner 必须运行在具备文件系统、子进程和外网能力的独立环境中，不能嵌入 `apps/web` 的 Cloudflare Worker。
 
-## 硬性流程
+## 执行顺序
 
-1. 保存完整原始需求。
-2. `runSpecWorkflow()` 驱动真实 Mobile Spec：Proposal → Specs → Design/Review → Tasks，并逐阶段执行门禁。
-3. 只有全部 Mobile Spec 门禁通过后，才把本次 artifacts 交给模型生成 `SiteManifest`。
-4. 生成器从中立 Next.js 模板初始化项目，写入完整源码和 `mobile-build-manifest.json`。
-5. 执行 `npm ci` 和 `npm run build`；失败日志回传模型修复，最多三轮。
-6. 构建成功的源码由 DeploymentProvider 发布。只有 Provider 返回外部 HTTPS URL 后才可标记为 delivered。
+1. 鉴权接收 `POST /jobs`，按 `projectId` 幂等入队。
+2. 创建隔离 Mobile Spec 工作区。
+3. 生成并门禁验证 Proposal、Specs、Design、Review、Tasks。
+4. 调用本机已登录 Codex CLI，或使用 `OPENAI_API_KEY` 调用 Structured Outputs。
+5. 从中立模板写入 requirement-specific `SiteManifest` 与 `mobile-build-manifest.json`。
+6. 执行 `npm ci --no-audit --no-fund` 和 `npm run build`；失败日志最多触发三轮修复。
+7. 由 DeploymentProvider 发布，使用外部 HTTPS URL 做健康检查。
+8. 仅当三项 evidence 为真时返回 `delivered`。
 
-Mobile Spec 是硬门禁，不存在跳过或主题示例兜底。仓库不包含任何业务主题模板；用户需求和本次 Mobile Spec 是唯一产品事实来源。
+不存在 Mobile Spec 跳过、业务主题示例兜底、localhost 交付或站内假预览。
 
-## 环境
+## Runner API
+
+- `GET /health`：Provider 和部署配置健康状态。
+- `POST /jobs`：提交异步任务，需要 Bearer token。
+- `GET /jobs/{projectId}`：读取 `status`、`stage`、`progress`、`message`、最近 `events`、错误或交付证据。
+
+状态中的事件只保留最近 24 条且当前为内存数据；正式 Cloud Runner 应持久化到控制面事件库。
+
+## 环境变量
 
 | 变量 | 默认值 | 用途 |
 |---|---|---|
-| `OPENAI_API_KEY` | 无 | 本地 runner 调用 OpenAI 时必需 |
-| `CODEX_RUNNER_TOKEN` | 无 | 控制面调用 Runner 的 Bearer token |
-| `RUNNER_CALLBACK_TOKEN` | 无 | Runner 回写控制面的 Bearer token |
-| `CODEGEN_MODEL` | `gpt-4o` | 支持 Structured Outputs 的模型 ID |
-| `CODEGEN_RUNNER_PORT` | `5174` | 本地 runner 端口 |
-| `CODEGEN_WEB_ORIGIN` | `http://localhost:5173` | 本地 CORS 来源 |
-| `CODEGEN_TIMEOUT_MS` | `600000` | 单次生成超时 |
+| `CODEX_RUNNER_TOKEN` | 无 | `/jobs` Bearer token |
+| `RUNNER_CALLBACK_TOKEN` | 无 | 可选回调 token；即使禁用回调，当前 Runner 健康门禁仍要求配置 |
+| `CODEX_BIN` | 无 | Codex CLI 绝对路径；没有 API Key 时使用 |
+| `CODEX_WORKDIR` | 当前目录 | Codex 只读结构化调用工作目录 |
+| `OPENAI_API_KEY` | 无 | 可选 OpenAI API Provider |
+| `CODEGEN_MODEL` | `gpt-4o` | OpenAI Structured Outputs 模型 |
+| `CODEX_MODEL` | Codex 默认 | Codex CLI 模型覆盖 |
+| `CODEGEN_RUNNER_PORT` | `5174` | Runner 监听端口 |
+| `CODEGEN_TIMEOUT_MS` | `600000` | 一次完整生成超时 |
+| `CODEGEN_DISABLE_CALLBACK` | 未设置 | `1` 时由控制站主动拉取状态 |
+| `CODEGEN_DEPLOYMENT_PROVIDER` | 无 | 部署 Provider；当前验收值可为 `cloudflare-quick-tunnel` |
+| `CODEGEN_TUNNEL_BIN` | 无 | Quick Tunnel 使用的 `cloudflared` 路径 |
+| `CODEGEN_HEALTHCHECK_BIN` | 无 | 可选系统级健康检查命令（当前使用 curl） |
 
-## CLI
-
-```bash
-OPENAI_API_KEY=sk-... node bin/generate.mjs "做一个社区咖啡店官网" --out /tmp/coffee-site
-```
-
-`runner.mjs` 提供受鉴权的异步 `/jobs` 协议，并回写阶段与交付证据。它必须运行在具备 Node、文件系统、子进程和外网能力的常驻执行环境。
-
-`--serve` 与 Runner 内部 localhost 只用于健康检查，不是交付 URL。未接入真实 DeploymentProvider 时任务明确失败，绝不返回 localhost 或站内假预览。
-
-## 测试
+## CLI 与测试
 
 ```bash
-npm ci
+OPENAI_API_KEY=... node bin/generate.mjs "做一个社区咖啡店官网" --out /tmp/coffee-site
 npm test
 ```
 
-测试覆盖 manifest 约束、安全写文件、中立模板复制、Mobile Spec 工作区与真实门禁，以及中立 fixture 的生产构建。
+`--serve` 与内部 localhost 只用于本地检查，不能作为最终交付地址。

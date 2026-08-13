@@ -2,111 +2,81 @@
 
 ## 1. 产品定位
 
-Mobile Build 是一个手机端 AI 项目构建入口。用户用一句话描述想做的网站，系统先生成可确认的项目方案，再选择用户电脑或云端执行器完成 Next.js 项目的初始化、实现、验证、构建和部署，最终返回可访问 URL 与源代码产物。
+Mobile Build 是一个移动端网站生成入口。用户提交一句完整需求，受信任 Runner 将其转成 Mobile Spec，调用 Codex 实现 Next.js 页面，完成生产构建和部署检查，最后返回独立 HTTPS URL。
 
-产品不是“把一段 Prompt 直接交给 Shell”，而是由 Mobile Spec 把自然语言转成可追踪规格、任务、门禁和交付记录，再由受控执行器实施。
+产品不允许浏览器用定时器、模板或记录页模拟执行；用户看到的进度必须来自 Runner 状态。
 
-## 2. 目标用户和核心场景
-
-### 目标用户
-
-- 希望随时用手机创建原型、活动页、工具站或内部应用的产品与开发人员。
-- 希望远程驱动自己电脑上现有项目和开发环境的个人用户。
-- 电脑离线时，希望使用标准云端环境继续构建新项目的用户。
-
-### 核心场景
-
-1. 在手机中登录并输入一句需求。
-2. 查看系统整理的页面、功能、数据、技术栈、执行位置和排除项。
-3. 确认方案，观察 Mobile Spec、编码、验证、构建和部署进度。
-4. 打开交付 URL，继续对话修改项目，或下载指定 checkpoint 的源码。
-
-## 3. 用户主流程
+## 2. 当前用户流程
 
 ```mermaid
 flowchart TD
-  A["账号登录"] --> B["输入一句项目需求"]
-  B --> C["Mobile Spec 解析与缺口判断"]
-  C -->|"关键事实缺失"| D["逐个追问"]
-  D --> C
-  C --> E["生成项目方案卡"]
-  E -->|"修改"| C
-  E -->|"确认"| F["选择自动 / 本机 / 云端"]
-  F --> G["Proposal → Design → Tasks"]
-  G --> H["Coding → Verify → Build"]
-  H --> I["Deploy"]
-  I --> J["URL + 源码 + 验证摘要"]
-  J --> K["继续对话修改"]
+  A[登录] --> B[输入完整需求]
+  B --> C[保存项目]
+  C --> D[派发受信任 Runner]
+  D --> E[Mobile Spec 门禁]
+  E --> F[Codex 实现]
+  F --> G[npm ci 与生产构建]
+  G -->|失败且可修复| F
+  G --> H[DeploymentProvider]
+  H --> I[公网健康检查]
+  I --> J[保存交付 URL]
+  J --> K[历史详情中打开页面]
 ```
 
-## 4. 首个真实 MVP 范围
+执行页展示六个阶段：需求、Mobile Spec、Codex、构建、部署、完成。执行中每 3 秒同步百分比、当前 message 和最近事件；历史项目可点击恢复同一详情视图。
 
-这里的“真实 MVP”指下一阶段需要打通的最小闭环，不等同于当前已上线的交互演示。
+## 3. 已实现范围
 
-### 必须完成
+- 应用内 MVP 登录与项目 D1 持久化。
+- 纯文本完整需求；链接可以作为需求文本的一部分。
+- 无关键词模板、无固定业务页面、无健身示例项目。
+- Mobile Spec：Proposal、Specs、Design、Review、Tasks 和 gate。
+- Codex CLI / OpenAI API 二选一结构化 Provider。
+- 中立 Next.js 模板、完整文件 manifest、安全路径校验。
+- 可复现依赖安装、生产构建、失败日志修复。
+- Runner 实时 progress/message/events 与历史项目详情。
+- 外部 HTTPS URL 检查与三项交付 evidence。
 
-- 账号登录、项目与会话列表。
-- 新建 Next.js 项目，不处理已有仓库。
-- Cloud Agent 单一真实执行路径（Desktop Agent 入口已移除，暂不纳入当前范围）。
-- Mobile Spec Web 工作流：Proposal、Specs、Design、Review、Tasks、Coding、Verify、Archive。
-- 真实文件变更、结构化命令、日志和阶段事件流。
-- `npm run lint`、类型检查、测试、生产构建和最小健康检查。
-- 一个真实 `DeploymentProvider`，成功后返回 HTTPS Preview URL。
-- 指定 checkpoint 源码 ZIP 下载。
-- 暂停、取消、失败重试和继续修改。
+## 4. 验收实现与生产边界
 
-### 暂不纳入首个真实 MVP
+当前真实链路已经端到端成功，但仍属于受控验收环境：
 
-- GitHub/GitLab 登录、SSO 和自动创建远程仓库。
-- 多人协作、团队权限、计费与套餐。
-- Production 发布和自动创建付费外部资源。
-- iOS、Android、Harmony 项目真实云端构建。
-- 运行中在本机与云端之间无缝迁移。
-- 任意用户自定义 Shell 或无限网络访问。
+- Runner 是本机常驻进程，公网入口依赖临时隧道；关闭进程后不可执行新任务。
+- 生成页面由 Cloudflare Quick Tunnel 暴露，无稳定域名、持久性或 SLA。
+- 执行中事件保存在 Runner 内存；Runner 重启后无法恢复正在执行的 job。
+- D1 保留需求、项目终态和交付 URL，因此控制站刷新后仍可查看已保存历史。
 
-## 5. 当前上线版本的真实边界
+因此，当前可称为“真实验收链路”，不可称为“生产级云端构建平台”。
 
-当前版本用于验证移动端需求入口，不能作为真实 AI 构建能力对外宣传：
+## 5. 尚未实现
 
-- 登录、会话 Cookie、D1 项目记录是真实实现。
-- 原始需求、账户会话和项目草稿是真实实现；文本可与链接同时保存。
-- 浏览器端关键词规则、预设页面模板、示例构建日志和内置 `/preview` 已移除。
-- 本机 Desktop Agent 执行入口及其协议代码包已移除，真实执行统一走 Cloud Agent。
-- 云端执行器、持久化任务状态机、SSE、真实验证证据和 DeploymentProvider 仍待接入。
-- 真实 MVP 的唯一链路是“需求 → Mobile Spec artifacts → Agent 独立实现 → 发布 → 独立 URL”，包括从未预设过的需求。
+- 持久 job、attempt、event、checkpoint 和 artifact store。
+- 取消、暂停、断点继续、Runner lease 与故障转移。
+- 源码 ZIP、不可变 checkpoint 和继续修改。
+- 正式 Cloud Runner 与持久 DeploymentProvider。
+- 邀请制多用户、配额、计费、审计查询和数据删除。
+- iOS、Android、Harmony 的真实生成与构建。
 
-## 6. 产品状态与交付语义
+## 6. 状态与交付语义
 
-项目状态建议统一为：
+当前项目状态：
 
-`draft → planning → awaiting_approval → queued → running → verifying → deploying → ready`
+`queued → building → delivered`
 
-终止状态：`failed`、`cancelled`、`blocked`、`archived`。
+失败终态：`failed`。`currentStage` 使用：
 
-只有同时满足以下条件才能显示“已交付”：
+`requirement | mobile-spec | implementation | build | deployment | delivered | failed`
 
-- Mobile Spec 必需 artifacts 完整，所有 gate 通过。
-- 源代码存在不可变 checkpoint。
-- 验证与生产构建成功。
-- 部署平台返回稳定 deployment ID 和 HTTPS URL。
-- 对 URL 完成最小健康检查。
+只有以下条件同时成立才允许保存 `delivered`：
 
-## 7. 非功能目标
+- Mobile Spec artifacts 与所有 gate 通过。
+- `npm run build` 成功。
+- DeploymentProvider 返回非 localhost、非控制站、非 `/preview` 的 HTTPS URL。
+- 公网健康检查返回非 5xx。
+- Runner 返回 `mobileSpecPassed`、`buildPassed`、`deployPassed` 三项证据。
 
-- 手机端首次可交互目标：P75 小于 2.5 秒。
-- 创建任务接口目标：P95 小于 500 毫秒，不包含模型执行时间。
-- 事件展示延迟目标：P95 小于 2 秒。
-- 每次执行均可取消、可审计、可从最近 checkpoint 重试。
-- 任意失败都不能丢失最近已确认方案和最近有效源码快照。
-- 平台和 Cloud Agent 不能在日志中输出明文 Secret。
+## 7. 当前验收场景
 
-## 8. MVP 验收场景
+至少覆盖：记账网站、活动报名页、团队看板和从未预设过的新业务网站。每条需求必须验证内容匹配、门禁、生产构建、外部 URL 和 HTTP 结果；失败用例必须确认没有交付 URL。
 
-至少使用以下四个固定需求做端到端回归，其中第 4 项必须用于证明系统没有依赖预设模板：
-
-1. “做一个极简个人记账网站，可按月份查看支出。”
-2. “做一个活动报名页，带人数统计和移动端分享。”
-3. “做一个团队待办看板，支持优先级和筛选。”
-4. “做一个生活方式电商网站，支持商品浏览和购物车。”
-
-每个场景必须从一句话完成方案确认、代码生成、验证、构建、部署、URL 健康检查和 ZIP 下载；失败注入测试至少覆盖依赖安装失败、测试失败、部署失败、用户取消和事件流重连。
+生产化验收还需增加 Runner 重启恢复、断网重连、并发幂等、部署 Provider 半成功、取消和 Secret 泄漏测试。

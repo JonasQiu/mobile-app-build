@@ -1,0 +1,66 @@
+#!/usr/bin/env node
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const sourceRevision = process.env.DOCS_SOURCE_SHA || execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+
+async function text(path) {
+  return readFile(join(root, path), "utf8");
+}
+
+function yes(source, pattern) {
+  return pattern.test(source) ? "已实现" : "未检测到";
+}
+
+const [app, projects, jobs, runner, generate, manifest, hosting] = await Promise.all([
+  text("apps/web/app/MobileBuildApp.tsx"),
+  text("apps/web/app/api/projects/route.ts"),
+  text("apps/web/app/api/v1/projects/[projectId]/jobs/route.ts"),
+  text("packages/codegen/runner.mjs"),
+  text("packages/codegen/src/generate.js"),
+  text("packages/codegen/src/manifest-schema.js"),
+  text("apps/web/.openai/hosting.json"),
+]);
+
+const facts = [
+  ["历史项目详情", yes(app, /function openProject\(item: ProjectRecord\)/), "历史条目恢复需求、状态、消息与交付入口"],
+  ["实时进度 UI", yes(app, /className="live-progress"/), "六阶段、百分比、当前 message、最近事件"],
+  ["可信状态同步", yes(projects, /executionEvents/), "控制站服务端轮询 Runner，不接受浏览器终态"],
+  ["受信任派发", yes(jobs, /CODEX_RUNNER_TOKEN/), "服务端 Bearer token 派发"],
+  ["Runner message 流", yes(runner, /function reportProgress\(projectId, event\)/), "progress/message/events，最近 24 条"],
+  ["Mobile Spec 硬门禁", yes(generate, /Mobile Spec workflow is required/), "缺少或失败时停止生成"],
+  ["交付 evidence", yes(runner, /mobileSpecPassed: true[\s\S]*buildPassed: true[\s\S]*deployPassed: true/), "三项证据齐全才 delivered"],
+  ["生成文件安全", yes(manifest, /validateManifest/), "路径、路由、必需文件、外部字体约束"],
+  ["D1 binding", yes(hosting, /"d1"\s*:\s*"DB"/), "项目与会话持久化"],
+];
+
+const sources = [app, projects, jobs, runner, generate, manifest, hosting].join("\n");
+const digest = createHash("sha256").update(sources).digest("hex").slice(0, 16);
+const body = `# 实现状态快照
+
+> 此文件由 \`node scripts/sync-docs.mjs\` 从源码生成。请勿手工编辑；叙述性设计请修改其他文档。
+
+同步源提交：\`${sourceRevision}\`
+
+源码事实指纹：\`${digest}\`
+
+| 能力 | 状态 | 源码事实 |
+|---|---|---|
+${facts.map(([name, status, detail]) => `| ${name} | ${status} | ${detail} |`).join("\n")}
+
+## 固定边界
+
+- Runner job/message/events 当前为内存状态，不具备重启恢复。
+- Cloudflare Quick Tunnel 只用于开发与验收，不是生产 DeploymentProvider。
+- Desktop Agent、持久 checkpoint、源码 ZIP、取消/暂停当前未实现。
+- 浏览器无权写入 delivered 或部署 URL。
+`;
+
+const output = join(root, "docs", "实现状态快照.md");
+await mkdir(dirname(output), { recursive: true });
+await writeFile(output, body, "utf8");
+console.log(relative(root, output));

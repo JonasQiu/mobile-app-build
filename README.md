@@ -1,75 +1,85 @@
-# mobile-app-build
+# Mobile Build
 
-通过移动端对话连接电脑端执行器，从一句自然语言需求生成、验证、构建并部署项目。
+Mobile Build 是一个移动端网站生成控制台：用户输入一句完整需求，系统通过受信任 Runner 执行 **需求 → Codex → Mobile Spec → 页面实现 → 生产构建 → 部署 → HTTPS URL**。
 
-当前保留账号登录、需求持久化、`@didi/dspec@1.11.0` 原始快照与 `@mobile-app-build/mobile-spec` 工作副本。移动端不再使用关键词模板、模拟构建日志或站内预览伪装真实交付；真实执行由 Mobile Spec、Agent、验证和部署 Provider 逐步接入。
+当前版本已经移除关键词模板、健身示例项目、前端计时假进度、示例日志和站内 `/preview` 伪交付。只有 Mobile Spec、生产构建、部署和公网健康检查全部通过，项目才进入 `delivered`。
 
-## 目标形态
+## 当前链路
 
 ```text
-移动端 Web
-  -> 云端会话 / 鉴权 / 任务协调服务
-  -> Agent 执行目标
-       -> 云端 Agent（可使用 OpenAI Codex / Agents API 与 Sandbox）
-  -> Mobile Spec 规格驱动流程
-  -> Next.js 项目初始化 / 依赖安装 / 编码 / 验证 / 构建
-  -> 部署平台
-  -> 返回可访问 URL
+Mobile Web（OpenAI Sites + D1）
+  -> POST /api/v1/projects/{projectId}/jobs
+  -> Trusted Node Runner
+       -> Codex CLI 或 OpenAI API Structured Outputs
+       -> Mobile Spec Proposal / Specs / Design / Review / Tasks 门禁
+       -> 中立 Next.js 模板 + requirement-specific SiteManifest
+       -> npm ci + next build（失败最多修复三轮）
+       -> DeploymentProvider + HTTPS health check
+  <- GET /api/projects 主动同步 Runner progress / message / evidence
+  -> 历史项目详情与独立交付 URL
 ```
+
+## 已实现
+
+- MVP 账号登录、7 天 HttpOnly 会话和 D1 项目持久化。
+- 完整原始需求保存，不做关键词分类或固定业务模板匹配。
+- 历史记录点击进入项目详情，恢复需求、状态、消息和交付入口。
+- 六阶段实时进度：需求、Mobile Spec、Codex、构建、部署、完成。
+- Runner 百分比、当前 message 与最近消息流，每 3 秒由服务端可信同步。
+- Mobile Spec 是硬门禁；缺少 artifacts 或 gate 失败时停止。
+- `npm ci`、`next build`、构建失败反馈修复和外部 HTTPS 健康检查。
+- 客户端无权把项目标记为已交付或写入 URL。
+
+## 当前边界
+
+- 线上控制站托管在 OpenAI Sites：<https://mobile-app-build-mvp.long229260097.chatgpt.site>。
+- 当前 Runner 是本机常驻 Node 进程，通过鉴权 HTTPS 入口供控制站调用；不是长期 Cloud Runner。
+- 当前生成站点使用 Cloudflare Quick Tunnel，仅适合开发和验收，无持久 URL 与 SLA；不得作为生产托管宣传。
+- Runner job、progress 和 message 当前保存在 Runner 内存；Runner 重启后，已完成项目仍保留在 D1，但执行中消息不能恢复。
+- 源码 checkpoint、ZIP 下载、取消、暂停、持久事件库、正式部署 Provider 尚未实现。
+- `@mobile-app-build/mobile-spec` 仍是通用化工作副本，完成全平台等价验收前不得声明完整替换。
 
 ## 目录
 
-- `apps/web/`：移动端需求入口（已实现）
-- `packages/codegen/`：Node 执行器（需求 → Mobile Spec → OpenAI → Next.js 项目 → 构建）+ 本地开发 runner
-- `packages/dspec-legacy/`：保留的 `@didi/dspec@1.11.0` 原始快照
-- `packages/mobile-spec/`：`@mobile-app-build/mobile-spec` 通用化工作副本，完成验收前禁止发布
-- `docs/文档中心.md`：配套文档总入口与当前实现状态
-- `docs/MVP产品说明.md`：MVP 产品范围、用户流程和验收场景
-- `docs/总体技术方案.md`：总体架构、执行面和关键技术选型
-- `docs/API与事件协议.md`：版本化 API、事件流、结构化动作和错误码
-- `docs/数据模型.md`：项目、任务、attempt、checkpoint、审批和部署数据模型
-- `docs/Mobile-Spec完整替换技术方案.md`：Mobile Spec Kernel、Skill、Adapter 和完整等价替换方案
-- `docs/安全与运维方案.md`：安全、Secret、沙箱、可观测与恢复方案
-- `docs/开发验证与部署手册.md`：本地开发、验证、数据库和部署操作手册
-- `docs/实施路线图.md`：真实 MVP 与 Mobile Spec 完整替换路线图
+- `apps/web/`：移动端控制站、认证、项目 API、历史详情与实时执行 UI。
+- `packages/codegen/`：受信任 Node Runner、Codex/OpenAI Provider、Mobile Spec、生成、构建和部署检查。
+- `templates/next-web/`：中立 Next.js 生成模板。
+- `packages/dspec-legacy/`：`@didi/dspec@1.11.0` 原始快照。
+- `packages/mobile-spec/`：Mobile Spec 通用化工作副本。
+- `docs/`：产品、架构、协议、数据、安全、部署和路线图文档。
 
-> 原计划的 `apps/desktop-agent`（本机执行器）和 `packages/protocol`（独立协议代码包）已移除：协议契约记录在 [API 与事件协议](docs/API与事件协议.md)，本机执行暂未纳入当前范围。
+## 本地开发
 
-## 当前约束
-
-- DSpec 原始流程能力必须在 Mobile Spec 中完整保留，不以去除内网依赖为由删减或静默降级。
-- 公开版默认不依赖滴滴内网、私有账号、私有 SDK 或私有知识库。
-- 允许依赖 Node.js、Git、Playwright、Chrome、Xcode、Android SDK、Harmony SDK 等公开可安装的标准本地工具。
-- 核心协议与特定 AI 工具解耦；真实执行统一走云端 Agent，其他 Agent 通过适配器接入。
-
-## MVP 能力
-
-- 本地账号密码登录、7 天安全会话和原始需求持久化。
-- 纯文本需求，可附加链接作为补充来源；不根据关键词推断页面或实现。
-- 仅当真实验证和 DeploymentProvider 成功后，才展示外部项目 URL。
-
-## 本地运行
-
-两个进程：`apps/web`（移动端入口，跑在 workerd）和 codegen runner（独立 Node 进程，负责真实生成与构建）。
+Web 和 Runner 是两个进程。Web 运行在 Cloudflare Workers 兼容环境，不能直接创建文件或启动构建进程。
 
 ```bash
-# 1) 移动端 Web
 cd apps/web
 npm ci
-npm run dev                 # http://localhost:5173
-
-# 2) 代码生成 runner（另开一个终端）
-cd packages/codegen
-npm install
-OPENAI_API_KEY=sk-... CODEGEN_MODEL=gpt-4o node runner.mjs   # http://localhost:5174
+npm run dev
 ```
 
-在本地开发环境中，Web 端保存一句需求后可调用 runner：runner 必须先完整执行 Mobile Spec，再调用 OpenAI 生成多页 Next.js 项目，执行 `npm ci` + `next build`。本地 `next start` 地址只用于开发检查，不得写回为交付 URL。
+```bash
+cd packages/codegen
+npm ci
+CODEX_RUNNER_TOKEN=... \
+RUNNER_CALLBACK_TOKEN=... \
+CODEX_BIN=/path/to/codex \
+CODEGEN_RUNNER_PORT=5174 \
+node runner.mjs
+```
 
-> 当前仓库提供可验证的 Node 执行内核；生产网站必须通过独立 Cloud Runner 与 DeploymentProvider 调用它。`apps/web` 跑在 workerd，无法自己 spawn `npm ci` / `next build`，也不能访问浏览器用户的 `localhost`。
+也可配置 `OPENAI_API_KEY`，让结构化生成直接使用 OpenAI API。部署必须额外配置真实 `DeploymentProvider`；localhost 永远不能写入交付 URL。
 
-使用已约定的 MVP 账号登录。
+## 验证
 
-## 文档
+```bash
+cd apps/web
+npm run build
+npm run lint
+node --test tests/*.test.mjs
 
-从 [Mobile Build 文档中心](docs/文档中心.md) 开始阅读。文档明确区分已实现、演示实现和待实现能力，避免把当前交互原型误认为真实构建执行器。
+cd ../../packages/codegen
+npm test
+```
+
+完整入口见 [文档中心](docs/文档中心.md)。

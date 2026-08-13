@@ -1,5 +1,7 @@
 # Mobile Spec 完整替换技术方案
 
+更新日期：2026-08-14
+
 ## 1. 目标与当前结论
 
 目标不是把 `dspec` 字样改成 `mobile-spec`，而是在完全不依赖滴滴内网、私有账号、私有 SDK 和隐含组织知识的环境中，保留原有规格驱动交付能力及其可验证行为。
@@ -9,8 +11,11 @@
 - 冻结 `packages/dspec-legacy` 作为 `@didi/dspec@1.11.0` 行为基线。
 - 建立 `packages/mobile-spec` 工作副本并修改包名、CLI 和主要 stage skill 名称。
 - 保留 H5、iOS、Android、Harmony schema 与生命周期骨架。
+- Web 生成链路已把 Proposal、Specs、Design、Review、Tasks 接成硬门禁；门禁不通过时不会进入 Codex 实现或交付。
 
 当前仍不能称为完整替换。扫描显示工作副本仍包含望岳、Cooper、SkillHub、Omega、私有 JSBridge、私有导航、WebLens、内网 registry、滴滴宿主 App 与专属字段等依赖和语义。
+
+这里需要区分两个状态：`packages/codegen` 已经能消费 Web 子集并真实执行，但 `packages/mobile-spec` 仍是内部工作副本。前者证明当前建站链路可用，不代表跨平台公开替换已经完成。
 
 ## 2. 不可丢失的能力
 

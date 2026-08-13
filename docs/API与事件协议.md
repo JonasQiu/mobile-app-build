@@ -1,207 +1,143 @@
 # API 与事件协议
 
-## 1. 协议目标
+## 1. 协议原则
 
-协议层必须与 Next.js、Codex、Vercel、Cloudflare 等具体实现解耦。所有请求携带版本，所有会改变状态的操作支持幂等，所有长任务通过事件流观察。
+- 浏览器只提交需求和启动任务，不能写入 `delivered` 或部署 URL。
+- Runner API 只接受 Bearer token，状态读取也必须鉴权。
+- `projectId` 同时是控制站项目和 Runner job 的幂等键。
+- 当前用服务端轮询同步；未来 SSE/WebSocket 仍复用相同 job 字段。
+- 错误文本可展示，但不得包含 Secret、完整系统路径或未经裁剪的模型输入。
 
-公共约定：
+## 2. 控制站 API（当前实现）
 
-- API 前缀：`/api/v1`。
-- 内容类型：`application/json; charset=utf-8`。
-- 时间：UTC ISO 8601。
-- ID：不可猜测的带前缀字符串，如 `prj_`、`job_`、`att_`、`evt_`。
-- 写请求通过 `Idempotency-Key` 防止手机网络重试造成重复任务。
-- 错误使用稳定 `code`，人类可读 `message` 只用于展示。
-
-## 2. 当前 MVP API
-
-| 方法 | 路径 | 状态 | 说明 |
-|---|---|---|---|
-| `POST` | `/api/auth/login` | 已实现 | 账号密码登录并设置安全 Cookie |
-| `POST` | `/api/auth/logout` | 已实现 | 撤销当前 Session |
-| `GET` | `/api/auth/session` | 已实现 | 获取当前登录用户 |
-| `GET` | `/api/projects` | 已实现 | 查询最近 20 个项目摘要 |
-| `POST` | `/api/projects` | 已实现 | 保存原始需求草稿 |
-| `PATCH` | `/api/projects` | 已实现 | MVP 项目摘要更新；真实任务后续迁移到 `/api/v1` |
-
-这些接口用于当前演示，真实执行闭环应迁移到下面的版本化资源 API。
-
-## 3. 目标资源 API
-
-### 项目与消息
-
-| 方法 | 路径 | 用途 |
+| 方法 | 路径 | 作用 |
 |---|---|---|
-| `POST` | `/api/v1/projects` | 创建逻辑项目 |
-| `GET` | `/api/v1/projects` | 分页查询项目 |
-| `GET` | `/api/v1/projects/{projectId}` | 获取项目、最新状态和交付摘要 |
-| `POST` | `/api/v1/projects/{projectId}/messages` | 添加需求或继续修改消息 |
-| `GET` | `/api/v1/projects/{projectId}/messages` | 查询对话与需求来源 |
-| `POST` | `/api/v1/projects/{projectId}/archive` | 归档项目，不删除源码 |
+| `POST` | `/api/auth/login` | 登录并创建 HttpOnly Session |
+| `POST` | `/api/auth/logout` | 撤销当前 Session |
+| `GET` | `/api/auth/session` | 读取当前用户 |
+| `GET` | `/api/projects` | 查询项目，并为执行中项目同步 Runner 状态 |
+| `POST` | `/api/projects` | 保存完整需求，创建 `queued` 项目 |
+| `PATCH` | `/api/projects` | 始终返回 `403`，禁止浏览器伪造终态 |
+| `POST` | `/api/v1/projects/{projectId}/jobs` | 服务端派发受信任 Runner |
+| `POST` | `/api/v1/projects/{projectId}/delivery` | 兼容 Runner 回调，需要 callback token |
+| `GET` | `/api/v1/projects/{projectId}/delivery` | 受信任 Runner 或 Sites owner 读取项目需求 |
 
-### 计划与审批
-
-| 方法 | 路径 | 用途 |
-|---|---|---|
-| `POST` | `/api/v1/projects/{projectId}/plans` | 创建 planning attempt |
-| `GET` | `/api/v1/plans/{planId}` | 获取方案卡和 Mobile Spec artifact 引用 |
-| `POST` | `/api/v1/plans/{planId}/approve` | 确认方案版本 |
-| `POST` | `/api/v1/approvals/{approvalId}/resolve` | 同意或拒绝敏感动作 |
-
-### 构建任务
-
-| 方法 | 路径 | 用途 |
-|---|---|---|
-| `POST` | `/api/v1/projects/{projectId}/jobs` | 从已确认方案创建任务 |
-| `GET` | `/api/v1/jobs/{jobId}` | 获取任务和当前 attempt |
-| `POST` | `/api/v1/jobs/{jobId}/cancel` | 幂等取消任务 |
-| `POST` | `/api/v1/jobs/{jobId}/retry` | 从指定 checkpoint 创建新 attempt |
-| `GET` | `/api/v1/jobs/{jobId}/events` | SSE 事件流，支持游标恢复 |
-
-### 产物与部署
-
-| 方法 | 路径 | 用途 |
-|---|---|---|
-| `GET` | `/api/v1/checkpoints/{checkpointId}` | 获取 manifest 与验证摘要 |
-| `POST` | `/api/v1/checkpoints/{checkpointId}/download` | 生成短时 ZIP 下载地址 |
-| `GET` | `/api/v1/deployments/{deploymentId}` | 查询部署与健康状态 |
-
-站内 `/preview` 演示入口已移除。真实任务必须把完整需求交给 Mobile Spec，生成 Proposal、Specs、Design、Review 和 Tasks，再由 Agent 在隔离工作区实现；`previewUrl` 只能在真实构建通过且 DeploymentProvider 返回外部地址后写入。
-
-### 设备
-
-> 面向未来的 Desktop Agent，当前未纳入范围。
-
-| 方法 | 路径 | 用途 |
-|---|---|---|
-| `POST` | `/api/v1/devices/login` | Desktop Agent 同账户登录 |
-| `POST` | `/api/v1/devices/pairing-codes` | 创建一次性二维码配对码 |
-| `POST` | `/api/v1/devices/pair` | 已登录手机确认配对 |
-| `GET` | `/api/v1/devices` | 查询设备、在线状态和能力 |
-| `DELETE` | `/api/v1/devices/{deviceId}` | 撤销设备令牌和绑定 |
-
-## 4. 创建任务示例
+### `GET /api/projects` 项目结构
 
 ```json
 {
-  "planId": "plan_01K...",
-  "planVersion": 3,
-  "executor": {
-    "mode": "auto",
-    "preferredDeviceId": null
-  },
-  "delivery": {
-    "environment": "preview",
-    "provider": "default"
-  },
-  "limits": {
-    "maxMinutes": 30,
-    "maxRepairRounds": 3
-  }
+  "id": "prj_...",
+  "name": "创建一个咖啡馆官网",
+  "prompt": "创建一个咖啡馆官网……",
+  "status": "building",
+  "currentStage": "mobile-spec",
+  "previewUrl": null,
+  "updatedAt": "2026-08-14T00:00:00Z",
+  "executionProgress": 36,
+  "executionMessage": "正在生成 Design 并执行设计评审",
+  "executionEvents": [
+    { "id": "...", "at": "2026-08-14T00:00:00Z", "message": "任务已进入执行队列" }
+  ]
 }
 ```
 
-成功返回 `202 Accepted`：
+`executionProgress`、`executionMessage`、`executionEvents` 当前由控制站查询 Runner 后临时附加，不写入 projects 表；项目终态与 URL 才写入 D1。
+
+## 3. Runner API（当前实现）
+
+### 健康检查
+
+`GET /health`
+
+```json
+{ "ok": true, "deploymentProviderConfigured": true }
+```
+
+### 创建任务
+
+`POST /jobs`
+
+Headers：
+
+```text
+Authorization: Bearer <CODEX_RUNNER_TOKEN>
+Idempotency-Key: project-<projectId>
+Content-Type: application/json
+```
+
+Body：
+
+```json
+{
+  "projectId": "prj_...",
+  "requirement": "完整原始需求",
+  "instructions": "服务端执行约束",
+  "callbackUrl": "https://control.example/api/v1/projects/prj_.../delivery"
+}
+```
+
+返回 `202` 与异步 job；相同 `projectId` 正在运行时返回现有 job。
+
+### 查询任务
+
+`GET /jobs/{projectId}`
 
 ```json
 {
   "job": {
-    "id": "job_01K...",
-    "projectId": "prj_01K...",
-    "status": "queued",
-    "currentAttemptId": "att_01K..."
-  },
-  "eventsUrl": "/api/v1/jobs/job_01K.../events"
-}
-```
-
-## 5. 统一事件 Envelope
-
-```ts
-type BuildEvent<T = unknown> = {
-  schemaVersion: 1;
-  id: string;
-  sequence: number;
-  type: string;
-  occurredAt: string;
-  projectId: string;
-  jobId: string;
-  attemptId: string;
-  actor: {
-    kind: "user" | "control-plane" | "desktop-agent" | "cloud-runner" | "provider";
-    id: string;
-  };
-  visibility: "summary" | "detail" | "audit";
-  payload: T;
-};
-```
-
-同一 attempt 内 `sequence` 严格递增；消费者按 `id` 去重。事件不可更新，纠正信息通过新事件追加。
-
-## 6. 最小事件目录
-
-| 事件 | 关键字段 | 手机端用途 |
-|---|---|---|
-| `plan.ready` | `planId`, `version`, `summary`, `questions` | 展示方案卡 |
-| `plan.blocked` | `reason`, `question` | 要求补充关键事实 |
-| `job.queued` | `executorMode` | 展示等待状态 |
-| `attempt.started` | `executorId`, `baseCheckpointId` | 标记真实执行开始 |
-| `stage.started` | `stage`, `label` | 推进阶段进度 |
-| `stage.completed` | `stage`, `durationMs`, `evidenceRefs` | 完成阶段 |
-| `action.requested` | `actionId`, `kind`, `risk` | 审批或审计 |
-| `command.started` | `commandId`, `program`, `argsSummary` | 展示安全命令摘要 |
-| `command.output` | `commandId`, `stream`, `chunk`, `redacted` | 展开日志 |
-| `command.completed` | `exitCode`, `durationMs` | 判断命令结果 |
-| `file.changed` | `path`, `operation`, `additions`, `deletions` | 展示文件变化 |
-| `verification.completed` | `checks`, `passed` | 展示验证证据 |
-| `approval.required` | `approvalId`, `risk`, `summary`, `expiresAt` | 显示确认卡 |
-| `checkpoint.created` | `checkpointId`, `contentDigest` | 恢复和下载 |
-| `deployment.ready` | `deploymentId`, `url`, `health` | 展示交付 URL |
-| `attempt.failed` | `failureClass`, `retryable`, `summary` | 错误恢复 |
-| `job.cancelled` | `cancelledBy` | 终止状态 |
-
-## 7. 结构化动作
-
-执行器只接受明确动作类型：
-
-```ts
-type ExecutionAction =
-  | { kind: "fs.read"; paths: string[] }
-  | { kind: "fs.applyPatch"; patch: string }
-  | { kind: "process.run"; program: string; args: string[]; cwdRef: string; timeoutMs: number }
-  | { kind: "network.fetch"; url: string; method: "GET" | "HEAD" }
-  | { kind: "artifact.upload"; artifactType: string; pathRef: string }
-  | { kind: "deployment.create"; provider: string; checkpointId: string };
-```
-
-禁止把 `curl ... | sh`、未解析的复合 Shell 字符串或宿主机绝对路径当作普通动作透传。策略引擎应对程序、参数、工作区、网络域名、Secret 引用和审批票据分别校验。
-
-## 8. 审批协议
-
-审批记录必须包含：
-
-- 具体动作和影响范围。
-- 风险级别：`low`、`medium`、`high`、`critical`。
-- 使用的目录、外部账户、Secret 或预计费用。
-- 到期时间、一次性 nonce 和绑定的 attempt ID。
-- 用户决定与决定时间。
-
-批准票据仅对描述完全一致的单次动作或动作集合有效；修改参数、切换环境或超时后必须重新审批。
-
-## 9. 错误模型
-
-```json
-{
-  "error": {
-    "code": "EXECUTOR_OFFLINE",
-    "message": "电脑端 Agent 当前离线",
-    "retryable": true,
-    "requestId": "req_01K...",
-    "details": {
-      "deviceId": "dev_01K..."
-    }
+    "id": "job_...",
+    "status": "running",
+    "stage": "implementation",
+    "progress": 64,
+    "message": "Mobile Spec 已通过，Codex 正在实现页面",
+    "events": [
+      { "id": "...", "at": "2026-08-14T00:00:00Z", "message": "Runner 已接收任务" }
+    ],
+    "updatedAt": "2026-08-14T00:00:00Z"
   }
 }
 ```
 
-首批稳定错误码：`UNAUTHENTICATED`、`FORBIDDEN`、`PLAN_VERSION_CONFLICT`、`APPROVAL_REQUIRED`、`EXECUTOR_OFFLINE`、`CAPABILITY_MISSING`、`WORKSPACE_CONFLICT`、`POLICY_DENIED`、`LIMIT_EXCEEDED`、`VERIFY_FAILED`、`BUILD_FAILED`、`DEPLOY_FAILED`、`CANCELLED`、`INTERNAL_ERROR`。
+终态成功还包含：
+
+```json
+{
+  "status": "delivered",
+  "stage": "delivered",
+  "progress": 100,
+  "url": "https://generated.example",
+  "evidence": {
+    "mobileSpecPassed": true,
+    "buildPassed": true,
+    "deployPassed": true
+  }
+}
+```
+
+失败包含 `status: "failed"`、`stage: "failed"` 和裁剪后的 `error`。
+
+## 4. 进度与 message 映射
+
+| 内部事件 | 对外阶段 | 进度 | message 含义 |
+|---|---|---:|---|
+| queued | mobile-spec | 4 | 已进入队列 |
+| spec-workflow | mobile-spec | 9 | 初始化规格工作区 |
+| spec-propose | mobile-spec | 18 | Proposal 与 Specs |
+| spec-design | mobile-spec | 36 | Design 与 Review |
+| spec-task | mobile-spec | 52 | Tasks 与 gate |
+| llm | implementation | 64 | Codex 生成页面 |
+| write | implementation | 72 | 写入项目文件 |
+| retry | implementation | 76 | 根据构建日志修复 |
+| build | build | 80 | 安装依赖和生产构建 |
+| done | build | 88 | 构建完成 |
+| deployment | deployment | 92 | 发布与健康检查 |
+| delivered | delivered | 100 | 三项 evidence 通过 |
+| failed | failed | 100 | 失败且无交付 URL |
+
+进度代表阶段性里程碑，不是模型 token 或墙钟时间的线性百分比。
+
+## 5. 未来协议
+
+生产化后应增加 `jobId` 资源、attempt、cursor-based event stream、cancel、lease、checkpoint、artifact 和 deployment 资源。事件至少应包含 `sequence`、`occurredAt`、`attemptId`、`type`、`payload`，支持断线重放和幂等落库。
+
+当前 Runner 内存事件不能满足重启恢复，不能被当作最终审计日志。
