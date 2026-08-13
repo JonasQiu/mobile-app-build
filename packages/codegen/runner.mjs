@@ -33,6 +33,46 @@ const CALLBACK_TOKEN = process.env.RUNNER_CALLBACK_TOKEN || "";
 const jobs = new Map();
 const previews = new Map();
 
+const PROGRESS = {
+  queued: [4, "任务已进入执行队列"],
+  "spec-workflow": [9, "正在初始化 Mobile Spec 工作区"],
+  "spec-propose": [18, "正在生成 Proposal 与页面规格"],
+  "spec-design": [36, "正在生成 Design 并执行设计评审"],
+  "spec-task": [52, "正在拆解可执行任务并通过门禁"],
+  llm: [64, "Mobile Spec 已通过，Codex 正在实现页面"],
+  write: [72, "正在写入完整项目文件"],
+  build: [80, "正在安装锁定依赖并执行生产构建"],
+  retry: [76, "构建未通过，Codex 正在根据真实日志修复"],
+  done: [88, "生产构建已通过，准备部署"],
+  deployment: [92, "正在发布独立站点并执行公网健康检查"],
+  delivered: [100, "部署和健康检查均已通过"],
+  failed: [100, "执行失败，未生成交付 URL"],
+};
+
+function updateJob(projectId, patch, eventMessage) {
+  const current = jobs.get(projectId) || {};
+  const message = eventMessage || patch.message || current.message || "";
+  const events = Array.isArray(current.events) ? [...current.events] : [];
+  if (message && events.at(-1)?.message !== message) {
+    events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), message });
+  }
+  const next = { ...current, ...patch, message, events: events.slice(-24), updatedAt: new Date().toISOString() };
+  jobs.set(projectId, next);
+  return next;
+}
+
+function reportProgress(projectId, event) {
+  const [progress, baseMessage] = PROGRESS[event.stage] || [10, `正在执行 ${event.stage}`];
+  const attempt = Number(event.attempt) > 1 ? `（第 ${event.attempt} 次）` : "";
+  const gate = event.ok === true ? "，门禁已通过" : event.ok === false ? "，门禁未通过，正在修正" : "";
+  const stage = event.stage.startsWith("spec-") || event.stage === "spec-workflow"
+    ? "mobile-spec"
+    : event.stage === "llm" || event.stage === "write" || event.stage === "retry"
+      ? "implementation"
+      : event.stage === "done" ? "build" : event.stage;
+  updateJob(projectId, { status: "running", stage, progress }, `${baseMessage}${attempt}${gate}`);
+}
+
 function timingSafeEqual(left, right) {
   if (left.length !== right.length) return false;
   let mismatch = 0;
@@ -106,7 +146,7 @@ async function deployPreview(preview) {
 }
 
 async function executeJob(job) {
-  jobs.set(job.projectId, { id: job.id, status: "running", stage: "mobile-spec" });
+  updateJob(job.projectId, { id: job.id, status: "running", stage: "mobile-spec", progress: 7 }, "Runner 已接收任务，开始生成 Mobile Spec");
   const slug = slugify(job.projectId);
   const outDir = join(WORK_ROOT, slug);
   const specWorkRoot = join(SPEC_WORK_ROOT, slug);
@@ -118,13 +158,11 @@ async function executeJob(job) {
       outDir,
       specWorkRoot,
       openaiApiKey: process.env.OPENAI_API_KEY,
-      onProgress: ({ stage }) => {
-        if (stage === "llm" || stage === "write") jobs.set(job.projectId, { id: job.id, status: "running", stage: "implementation" });
-        if (stage === "build") jobs.set(job.projectId, { id: job.id, status: "running", stage: "build" });
-      },
+      onProgress: (event) => reportProgress(job.projectId, event),
     }), GENERATION_TIMEOUT_MS, "generation");
     if (!result.ok) throw new Error(`build failed after ${result.attempts} attempts`);
 
+    updateJob(job.projectId, { status: "running", stage: "deployment", progress: PROGRESS.deployment[0] }, PROGRESS.deployment[1]);
     await callback(job.callbackUrl, { status: "building", stage: "deployment" });
     const previous = previews.get(slug);
     if (previous) previous.stop();
@@ -139,16 +177,23 @@ async function executeJob(job) {
       url,
       evidence: { mobileSpecPassed: true, buildPassed: true, deployPassed: true },
     });
-    jobs.set(job.projectId, {
+    updateJob(job.projectId, {
       id: job.id,
       status: "delivered",
       stage: "delivered",
+      progress: 100,
       url,
       evidence: { mobileSpecPassed: true, buildPassed: true, deployPassed: true },
-    });
+    }, PROGRESS.delivered[1]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    jobs.set(job.projectId, { id: job.id, status: "failed", stage: "failed", error: message });
+    updateJob(job.projectId, {
+      id: job.id,
+      status: "failed",
+      stage: "failed",
+      progress: 100,
+      error: message,
+    }, `执行失败：${message}`);
     await callback(job.callbackUrl, { status: "failed", stage: "failed" }).catch(() => undefined);
   }
 }
@@ -205,7 +250,13 @@ const server = createServer(async (req, res) => {
     return;
   }
   const job = { id: `job_${crypto.randomUUID()}`, projectId, requirement, callbackUrl };
-  jobs.set(projectId, { id: job.id, status: "queued", stage: "mobile-spec" });
+  jobs.delete(projectId);
+  updateJob(projectId, {
+    id: job.id,
+    status: "queued",
+    stage: "mobile-spec",
+    progress: PROGRESS.queued[0],
+  }, PROGRESS.queued[1]);
   setImmediate(() => executeJob(job));
   send(res, 202, { job: jobs.get(projectId) });
 });

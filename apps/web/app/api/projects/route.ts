@@ -8,13 +8,21 @@ type ProjectRow = {
   currentStage: string | null;
   previewUrl: string | null;
   updatedAt: string;
+  executionProgress?: number;
+  executionMessage?: string;
+  executionEvents?: RunnerEvent[];
 };
+
+type RunnerEvent = { id?: string; at?: string; message?: string };
 
 type RunnerJob = {
   status?: string;
   stage?: string;
   url?: string;
   error?: string;
+  progress?: number;
+  message?: string;
+  events?: RunnerEvent[];
   evidence?: { mobileSpecPassed?: boolean; buildPassed?: boolean; deployPassed?: boolean };
 };
 
@@ -45,6 +53,15 @@ async function syncRunnerState(userId: string, projects: ProjectRow[]) {
       const data = await response.json() as { job?: RunnerJob };
       const job = data.job;
       if (!job) return;
+      project.executionProgress = Math.max(0, Math.min(100, Number(job.progress) || 0));
+      project.executionMessage = typeof job.message === "string" ? job.message.slice(0, 600) : undefined;
+      project.executionEvents = Array.isArray(job.events)
+        ? job.events.slice(-12).map((event) => ({
+          id: event.id,
+          at: event.at,
+          message: typeof event.message === "string" ? event.message.slice(0, 600) : undefined,
+        }))
+        : [];
       if (job.status === "failed") {
         await getD1().prepare(`UPDATE projects SET status = 'failed', current_stage = 'failed',
           updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?`).bind(project.id, userId).run();

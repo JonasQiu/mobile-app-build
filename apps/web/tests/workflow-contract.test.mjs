@@ -64,4 +64,17 @@ test("project polling synchronizes trusted runner evidence before delivery", asy
   assert.match(projectsRoute, /buildPassed/);
   assert.match(projectsRoute, /deployPassed/);
   assert.match(projectsRoute, /validDeliveryUrl\(job\.url\)/);
+  assert.match(projectsRoute, /executionProgress/);
+  assert.match(projectsRoute, /executionMessage/);
+  assert.match(projectsRoute, /executionEvents/);
+});
+
+test("history opens project details and execution view renders live progress messages", async () => {
+  const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
+  assert.match(app, /function openProject\(item: ProjectRecord\)/);
+  assert.match(app, /onClick=\{\(\) => openProject\(item\)\}/);
+  assert.match(app, /className="live-progress"/);
+  assert.match(app, /className="live-console"/);
+  assert.match(app, /每 3 秒同步/);
+  assert.doesNotMatch(app, /return isExternalDeliveryUrl\(item\.previewUrl\) \? <a className="project-row"/);
 });

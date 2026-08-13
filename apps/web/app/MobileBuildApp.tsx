@@ -12,6 +12,9 @@ type ProjectRecord = {
   currentStage: string | null;
   previewUrl: string | null;
   updatedAt: string;
+  executionProgress?: number;
+  executionMessage?: string;
+  executionEvents?: Array<{ id?: string; at?: string; message?: string }>;
 };
 
 const EXAMPLES = [
@@ -37,6 +40,26 @@ const STAGE_LABELS: Record<string, string> = {
   deployment: "正在部署并执行健康检查",
   delivered: "部署完成",
 };
+
+const STAGES = [
+  { key: "requirement", label: "需求", detail: "需求已保存" },
+  { key: "mobile-spec", label: "Mobile Spec", detail: "规格与门禁" },
+  { key: "implementation", label: "Codex", detail: "页面实现" },
+  { key: "build", label: "构建", detail: "生产验证" },
+  { key: "deployment", label: "部署", detail: "发布与检查" },
+  { key: "delivered", label: "完成", detail: "返回 URL" },
+];
+
+function stageIndex(stage: string | null) {
+  if (stage === "failed") return -1;
+  return Math.max(0, STAGES.findIndex((item) => item.key === stage));
+}
+
+function formatEventTime(value?: string) {
+  if (!value) return "刚刚";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "刚刚" : date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
 
 async function readJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
   const text = await response.text();
@@ -79,6 +102,7 @@ export function MobileBuildApp() {
   const [genProgress, setGenProgress] = useState("");
   const [genError, setGenError] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
+  const activeProject = projects.find((item) => item.id === activeProjectId) ?? null;
 
   useEffect(() => {
     fetch("/api/auth/session")
@@ -175,6 +199,42 @@ export function MobileBuildApp() {
     setPreviewUrl("");
   }
 
+  function openProject(item: ProjectRecord) {
+    setActiveProjectId(item.id);
+    setSubmittedPrompt(item.prompt);
+    setPreviewUrl(isExternalDeliveryUrl(item.previewUrl) ? item.previewUrl : "");
+    setGenError(item.status === "failed" ? item.executionMessage || "该任务执行失败，可重新发起构建。" : "");
+    setGenProgress(item.executionMessage || STAGE_LABELS[item.currentStage || ""] || item.status);
+    setGenerating(item.status === "building");
+    setSheet(null);
+    if (item.status === "building") {
+      void monitorProject(item.id)
+        .catch((error) => setGenError(error instanceof Error ? error.message : "读取执行状态失败"))
+        .finally(() => setGenerating(false));
+    }
+  }
+
+  async function monitorProject(projectId: string) {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 3000));
+      const poll = await fetch("/api/projects", { headers: { accept: "application/json" } });
+      const snapshot = await readJsonResponse<{ projects?: ProjectRecord[]; error?: string }>(poll, "读取执行状态失败");
+      if (!poll.ok) throw new Error(snapshot.error || "读取执行状态失败");
+      const items = snapshot.projects ?? [];
+      setProjects(items);
+      const current = items.find((item) => item.id === projectId);
+      if (!current) throw new Error("项目状态已丢失");
+      setGenProgress(current.executionMessage || STAGE_LABELS[current.currentStage || ""] || `正在执行：${current.currentStage || current.status}`);
+      if (current.status === "failed") throw new Error(current.executionMessage || `真实执行失败（阶段：${current.currentStage || "unknown"}）`);
+      if (current.status === "delivered") {
+        if (!isExternalDeliveryUrl(current.previewUrl)) throw new Error("执行器未返回通过校验的 HTTPS 部署地址");
+        setPreviewUrl(current.previewUrl);
+        return;
+      }
+    }
+    throw new Error("任务仍在执行，请稍后从项目列表查看状态");
+  }
+
   async function runProject(projectId: string) {
     if (!projectId || generating) return;
     setGenError("");
@@ -191,24 +251,7 @@ export function MobileBuildApp() {
       if (!response.ok || !data.job) throw new Error(data.error || "Codex 任务派发失败");
 
       setGenProgress("任务已进入云端执行队列…");
-      for (let attempt = 0; attempt < 200; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 3000));
-        const poll = await fetch("/api/projects", { headers: { accept: "application/json" } });
-        const snapshot = await readJsonResponse<{ projects?: ProjectRecord[]; error?: string }>(poll, "读取执行状态失败");
-        if (!poll.ok) throw new Error(snapshot.error || "读取执行状态失败");
-        const items = snapshot.projects ?? [];
-        setProjects(items);
-        const current = items.find((item) => item.id === projectId);
-        if (!current) throw new Error("项目状态已丢失");
-        setGenProgress(STAGE_LABELS[current.currentStage || ""] || `正在执行：${current.currentStage || current.status}`);
-        if (current.status === "failed") throw new Error(`真实执行失败（阶段：${current.currentStage || "unknown"}）`);
-        if (current.status === "delivered") {
-          if (!isExternalDeliveryUrl(current.previewUrl)) throw new Error("执行器未返回通过校验的 HTTPS 部署地址");
-          setPreviewUrl(current.previewUrl);
-          return;
-        }
-      }
-      throw new Error("任务仍在执行，请稍后从项目列表查看状态");
+      await monitorProject(projectId);
     } catch (error) {
       const message = error instanceof Error ? error.message : "生成失败";
       setGenError(message.length > 600 ? `${message.slice(0, 600)}…` : message);
@@ -221,6 +264,13 @@ export function MobileBuildApp() {
   function handleGenerate() {
     void runProject(activeProjectId);
   }
+
+  const currentStageIndex = stageIndex(activeProject?.currentStage || (previewUrl ? "delivered" : "requirement"));
+  const progressValue = activeProject?.status === "delivered"
+    ? 100
+    : Math.max(0, Math.min(99, activeProject?.executionProgress ?? (generating ? 5 : 0)));
+  const liveMessage = activeProject?.executionMessage || genProgress || (previewUrl ? "部署和健康检查均已通过" : "等待开始真实构建");
+  const liveEvents = activeProject?.executionEvents?.filter((event) => event.message).slice(-6).reverse() ?? [];
 
   if (authState === "checking") {
     return <main className="auth-shell loading-shell"><div className="brand-mark"><Icon name="spark" /></div><div className="loading-line"><span /></div></main>;
@@ -270,21 +320,28 @@ export function MobileBuildApp() {
             <div className="message-user"><p>{submittedPrompt}</p></div>
             <div className="message-agent">
               <div className="agent-avatar"><Icon name="spark" /></div>
-              <div><p className="agent-label">需求已保存</p><p>已原样保存，没有关键词分类或模板替换。点击“开始真实构建”后，服务端才会派发 Codex 任务。</p></div>
+              <div><p className="agent-label">{activeProject ? activeProject.name : "需求已保存"}</p><p>{activeProject?.status === "delivered" ? "该历史项目已完成，可查看执行记录和交付页面。" : activeProject?.status === "building" ? "该项目正在真实执行，下面会持续同步进度与消息。" : "已原样保存，没有关键词分类或模板替换。"}</p></div>
             </div>
             <article className="plan-card scope-card">
-              <div className="plan-head"><div><span>执行目标</span><h3>Codex Runner</h3></div><span className="version-pill">REAL</span></div>
-              <div className="truth-note"><strong>只接受真实交付证据</strong><span>必须同时通过 Mobile Spec、生产构建、部署和健康检查，才会出现可点击的 HTTPS 结果地址。</span></div>
-              <div className="plan-actions"><button className="primary-button" onClick={handleGenerate} disabled={!submittedPrompt || !activeProjectId || generating}>{generating ? "真实构建中…" : "开始真实构建"}<Icon name="spark" /></button><button className="secondary-button" onClick={() => { setPrompt(submittedPrompt); setSubmittedPrompt(""); }} disabled={generating}>修改需求</button><button className="secondary-button" onClick={() => setSheet("workflow")}>查看执行流程<Icon name="chevron" /></button></div>
-              {generating || previewUrl || genError ? (
-                <div className="generation-status">
-                  {previewUrl ? (
-                    <a className="primary-button" href={previewUrl} target="_blank" rel="noreferrer">查看生成结果<Icon name="external" /></a>
-                  ) : null}
-                  {generating ? <p className="gen-progress"><i className="status-dot" />{genProgress || "正在生成…"}</p> : null}
-                  {genError ? <pre className="gen-error" role="alert">{genError}</pre> : null}
-                </div>
-              ) : null}
+              <div className="plan-head"><div><span>项目执行</span><h3>{activeProject?.status === "delivered" ? "交付完成" : activeProject?.status === "failed" ? "执行失败" : generating ? "正在构建" : "准备执行"}</h3></div><span className={`version-pill ${activeProject?.status === "failed" ? "failed" : ""}`}>{progressValue}%</span></div>
+              <div className="live-progress" aria-label={`执行进度 ${progressValue}%`}><span style={{ width: `${progressValue}%` }} /></div>
+              <div className="stage-grid">
+                {STAGES.map((stage, index) => {
+                  const done = activeProject?.status === "delivered" || index < currentStageIndex;
+                  const running = activeProject?.status !== "failed" && index === currentStageIndex;
+                  return <div className={`stage-step ${done ? "done" : ""} ${running ? "running" : ""}`} key={stage.key}><i>{done ? "✓" : index + 1}</i><span><strong>{stage.label}</strong><small>{stage.detail}</small></span></div>;
+                })}
+              </div>
+              <section className="live-console" aria-live="polite">
+                <div className="console-head"><span><i className={generating ? "status-dot" : "status-dot quiet"} />实时消息</span><small>{activeProject?.status === "building" ? "每 3 秒同步" : "最后状态"}</small></div>
+                <p className="console-current">{liveMessage}</p>
+                {liveEvents.length ? <ol>{liveEvents.map((event, index) => <li key={event.id || `${event.at}-${index}`}><time>{formatEventTime(event.at)}</time><span>{event.message}</span></li>)}</ol> : <p className="console-empty">开始执行后，这里会展示 Mobile Spec、Codex、构建和部署消息。</p>}
+              </section>
+              {genError ? <pre className="gen-error" role="alert">{genError}</pre> : null}
+              <div className="plan-actions">
+                {previewUrl ? <a className="primary-button" href={previewUrl} target="_blank" rel="noreferrer">打开交付页面<Icon name="external" /></a> : <button className="primary-button" onClick={handleGenerate} disabled={!submittedPrompt || !activeProjectId || generating}>{generating ? "执行中" : activeProject?.status === "failed" ? "重新执行" : "开始真实构建"}<Icon name="spark" /></button>}
+                <button className="secondary-button" onClick={() => setSheet("workflow")}>流程说明<Icon name="chevron" /></button>
+              </div>
             </article>
           </div>
         )}
@@ -303,10 +360,7 @@ export function MobileBuildApp() {
           <div className="account-row"><div className="account-avatar">J</div><div><strong>{user?.username}</strong><span>MVP 本地账户</span></div><button aria-label="退出登录" onClick={handleLogout}><Icon name="logout" /></button></div>
           <div className="recent-projects">
             <div className="list-heading"><span>已保存需求</span><small>{projects.length}</small></div>
-            {projects.length ? projects.slice(0, 8).map((item) => {
-              const row = <><span>{item.name.slice(0, 1)}</span><div><strong>{item.name}</strong><small>{isExternalDeliveryUrl(item.previewUrl) ? "已由部署平台交付" : STAGE_LABELS[item.currentStage || ""] || item.status}</small></div>{isExternalDeliveryUrl(item.previewUrl) ? <Icon name="external" /> : <Icon name="chevron" />}</>;
-              return isExternalDeliveryUrl(item.previewUrl) ? <a className="project-row" href={item.previewUrl} target="_blank" rel="noreferrer" key={item.id}>{row}</a> : <div className="project-row" key={item.id}>{row}</div>;
-            }) : <p className="empty-list">保存第一条完整需求后会显示在这里。</p>}
+            {projects.length ? projects.slice(0, 12).map((item) => <button className={`project-row ${item.id === activeProjectId ? "active" : ""}`} type="button" onClick={() => openProject(item)} key={item.id}><span>{item.name.slice(0, 1)}</span><div><strong>{item.name}</strong><small>{item.executionMessage || (isExternalDeliveryUrl(item.previewUrl) ? "已交付 · 点击查看详情" : STAGE_LABELS[item.currentStage || ""] || item.status)}</small></div><Icon name="chevron" /></button>) : <p className="empty-list">保存第一条完整需求后会显示在这里。</p>}
           </div>
         </aside>
       ) : null}

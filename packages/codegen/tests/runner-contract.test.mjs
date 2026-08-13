@@ -27,4 +27,8 @@ test("trusted runner fails closed when required secrets are missing", async () =
   assert.match(runner, /CODEGEN_DEPLOYMENT_PROVIDER === "cloudflare-quick-tunnel"/);
   assert.match(runner, /req\.url\?\.startsWith\("\/jobs\/"\)/);
   assert.match(runner, /CODEGEN_DISABLE_CALLBACK === "1"/);
+  assert.match(runner, /function updateJob\(projectId, patch, eventMessage\)/);
+  assert.match(runner, /function reportProgress\(projectId, event\)/);
+  assert.match(runner, /events: events\.slice\(-24\)/);
+  assert.match(runner, /progress: 100/);
 });
