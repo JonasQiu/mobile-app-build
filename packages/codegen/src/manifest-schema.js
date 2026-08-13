@@ -40,5 +40,37 @@ export function normalizeManifest(manifest) {
   // Dedup files by path, last one wins (matches writeManifest semantics).
   const byPath = new Map();
   for (const f of manifest.files) byPath.set(f.path, f);
-  return { ...manifest, files: [...byPath.values()] };
+  const normalized = { ...manifest, files: [...byPath.values()] };
+  validateManifest(normalized);
+  return normalized;
+}
+
+export function validateManifest(manifest) {
+  for (const file of manifest.files) {
+    if (file.content.includes("next/font/google")) {
+      throw new Error(`Generated file ${file.path} uses next/font/google; builds must not download fonts`);
+    }
+  }
+  const paths = new Set(manifest.files.map((file) => file.path));
+  const required = [
+    "lib/data.ts",
+    "app/layout.tsx",
+    "app/globals.css",
+    "app/page.tsx",
+    "app/components/TopNav.tsx",
+    "app/components/Footer.tsx",
+    "app/components/Section.tsx",
+  ];
+  for (const path of required) {
+    if (!paths.has(path)) throw new Error(`Manifest is missing required file: ${path}`);
+  }
+  for (const route of manifest.navRoutes) {
+    if (!paths.has(route.fileSubpath)) {
+      throw new Error(`Manifest route ${route.href} is missing its page file: ${route.fileSubpath}`);
+    }
+  }
+  const duplicateHrefs = manifest.navRoutes
+    .map((route) => route.href)
+    .filter((href, index, all) => all.indexOf(href) !== index);
+  if (duplicateHrefs.length) throw new Error(`Manifest contains duplicate routes: ${duplicateHrefs.join(", ")}`);
 }

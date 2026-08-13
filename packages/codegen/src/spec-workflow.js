@@ -21,8 +21,12 @@ function slugify(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-  return base || "change";
+    .slice(0, 32);
+  const digest = [...new TextEncoder().encode(String(value || ""))]
+    .reduce((hash, byte) => Math.imul(hash ^ byte, 16777619) >>> 0, 2166136261)
+    .toString(36)
+    .slice(0, 8);
+  return `${base || "site"}-${digest}`;
 }
 
 // Per-generation isolation: redirect the sidecar home AND skip the blocking
@@ -143,7 +147,10 @@ async function runStage(specWorkspace, env, change, stageId, authorAndWrite, onP
   const ms = (args) => runMobileSpec(args, { cwd: specWorkspace, env });
   const maxAttempts = maxRetries + 1;
 
-  await ms(hookArgs("preStage", change, ["--stage", stageId]));
+  const preStage = await ms(hookArgs("preStage", change, ["--stage", stageId]));
+  if (!preStage.ok) {
+    return { ok: false, attempts: 0, check: null, reason: preStage.json?.message || preStage.stderr || `${stageId} preStage failed` };
+  }
 
   let attempt = 0;
   let prevGateError = "";
@@ -151,8 +158,18 @@ async function runStage(specWorkspace, env, change, stageId, authorAndWrite, onP
   while (attempt < maxAttempts) {
     attempt += 1;
     const nodes = await authorAndWrite(attempt, prevGateError);
+    let nodeFailure = "";
     for (const { node, relPath } of nodes) {
-      await ms(hookArgs("postNode", change, ["--stage", stageId, "--node", node, "--file", relPath]));
+      const postNode = await ms(hookArgs("postNode", change, ["--stage", stageId, "--node", node, "--file", relPath]));
+      if (!postNode.ok) {
+        nodeFailure = postNode.json?.message || postNode.stderr || `${node} gate failed`;
+        break;
+      }
+    }
+    if (nodeFailure) {
+      prevGateError = nodeFailure;
+      onProgress({ stage: `spec-${stageId}`, attempt, ok: false, reason: prevGateError });
+      continue;
     }
     const post = await ms(hookArgs("postStage", change, ["--stage", stageId]));
     check = post.json?.deterministic?.check ?? null;
@@ -194,11 +211,11 @@ export async function runSpecWorkflow({
   // dir (openspec/changes/<change>/) need not exist yet; it's created lazily
   // when the propose artifacts are written below.
   const preNew = await ms(hookArgs("preNew", changeName, ["--text-file", reqFile]));
-  if (preNew.json?.ok === false) {
+  if (!preNew.ok) {
     return { ok: false, reason: `preNew failed: ${preNew.json.message || preNew.stderr.slice(-400)}` };
   }
   const postNew = await ms(hookArgs("postNew", changeName, ["--text-file", reqFile]));
-  if (postNew.json?.ok === false) {
+  if (!postNew.ok) {
     return { ok: false, reason: `postNew failed: ${postNew.json.message || postNew.stderr.slice(-400)}` };
   }
 

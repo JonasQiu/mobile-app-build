@@ -3,7 +3,6 @@
 import { FormEvent, useEffect, useState } from "react";
 
 type AuthUser = { id: string; username: string };
-type ExecutorMode = "auto" | "local" | "cloud";
 
 type ProjectRecord = {
   id: string;
@@ -23,11 +22,21 @@ const EXAMPLES = [
 
 const WORKFLOW = [
   ["01", "需求输入", "保留完整文本，可同时补充公开链接或文档链接"],
-  ["02", "Mobile Spec", "生成 Proposal、Specs、Design、Review 与 Tasks"],
-  ["03", "Agent 实现", "本机 Desktop Agent 或隔离 Cloud Agent 按规格编写代码"],
-  ["04", "验证构建", "执行 lint、类型、测试、独立 Verify 与生产构建"],
-  ["05", "发布交付", "DeploymentProvider 发布独立项目并返回外部 HTTPS URL"],
+  ["02", "Codex API", "服务端把原始需求派发给受信任的云端 Codex Runner"],
+  ["03", "Mobile Spec", "生成 Proposal、Specs、Design、Review 与 Tasks，并通过门禁"],
+  ["04", "执行实现", "Codex 只依据原始需求和本次 Mobile Spec 编写项目代码"],
+  ["05", "构建验证", "执行依赖锁定安装、测试、独立 Verify 与生产构建"],
+  ["06", "部署结束", "部署独立站点；健康检查通过后返回外部 HTTPS URL"],
 ];
+
+const STAGE_LABELS: Record<string, string> = {
+  requirement: "需求已入队",
+  "mobile-spec": "正在生成并验证 Mobile Spec",
+  implementation: "Codex 正在实现页面",
+  build: "正在测试与生产构建",
+  deployment: "正在部署并执行健康检查",
+  delivered: "部署完成",
+};
 
 async function readJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
   const text = await response.text();
@@ -48,17 +57,11 @@ function isExternalDeliveryUrl(value: string | null): value is string {
   if (!value) return false;
   try {
     const url = new URL(value);
-    return (url.protocol === "https:" || url.protocol === "http:") && !url.pathname.startsWith("/preview");
+    return url.protocol === "https:" && url.hostname !== "localhost" && !url.pathname.startsWith("/preview");
   } catch {
     return false;
   }
 }
-
-// Dev-only local codegen runner (packages/codegen/runner.mjs). The apps/web
-// workerd runtime cannot spawn `npm install` / `next build` itself, so
-// generation runs in this separate Node process that stands in for the cloud
-// agent. Production replaces this URL with a real cloud runner.
-const RUNNER_URL = "http://localhost:5174";
 
 export function MobileBuildApp() {
   const [authState, setAuthState] = useState<"checking" | "signed-out" | "signed-in">("checking");
@@ -67,12 +70,10 @@ export function MobileBuildApp() {
   const [loggingIn, setLoggingIn] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [submittedPrompt, setSubmittedPrompt] = useState("");
-  const [executor, setExecutor] = useState<ExecutorMode>("auto");
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [sheet, setSheet] = useState<null | "menu" | "workflow">(null);
-  // Codegen (dev runner) state.
   const [activeProjectId, setActiveProjectId] = useState("");
   const [generating, setGenerating] = useState(false);
   const [genProgress, setGenProgress] = useState("");
@@ -144,7 +145,7 @@ export function MobileBuildApp() {
       const response = await fetch("/api/projects", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, prompt: value, executor }),
+        body: JSON.stringify({ name, prompt: value }),
       });
       const data = await readJsonResponse<{ project?: ProjectRecord; error?: string }>(response, "需求保存失败");
       if (!response.ok || !data.project) throw new Error(data.error || "需求保存失败");
@@ -155,6 +156,7 @@ export function MobileBuildApp() {
       setGenError("");
       setGenProgress("");
       setProjects((items) => [data.project as ProjectRecord, ...items.filter((item) => item.id !== data.project?.id)]);
+      await runProject(data.project.id);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "需求保存失败");
     } finally {
@@ -173,37 +175,40 @@ export function MobileBuildApp() {
     setPreviewUrl("");
   }
 
-  // Calls the local codegen runner, then marks the saved project as delivered
-  // with the returned preview URL so the existing external-link row renders it.
-  async function handleGenerate() {
-    if (!submittedPrompt || !activeProjectId || generating) return;
+  async function runProject(projectId: string) {
+    if (!projectId || generating) return;
     setGenError("");
-    setGenProgress("正在调用生成器…");
+    setGenProgress("正在派发 Codex 任务…");
     setPreviewUrl("");
     setGenerating(true);
     try {
-      const response = await fetch(`${RUNNER_URL}/generate`, {
+      const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/jobs`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: submittedPrompt, projectName: activeProjectId }),
+        headers: { "content-type": "application/json", "idempotency-key": `project-${projectId}` },
+        body: JSON.stringify({}),
       });
-      const data = await readJsonResponse<{ ok?: boolean; previewUrl?: string; error?: string; buildLog?: string; attempts?: number }>(response, "生成失败");
-      if (!response.ok || !data.ok || !data.previewUrl) {
-        const detail = data.error ? data.error : data.buildLog ? `构建失败：\n${data.buildLog.slice(-400)}` : "生成失败";
-        throw new Error(detail);
+      const data = await readJsonResponse<{ job?: { id: string }; error?: string; code?: string }>(response, "Codex 任务派发失败");
+      if (!response.ok || !data.job) throw new Error(data.error || "Codex 任务派发失败");
+
+      setGenProgress("任务已进入云端执行队列…");
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 3000));
+        const poll = await fetch("/api/projects", { headers: { accept: "application/json" } });
+        const snapshot = await readJsonResponse<{ projects?: ProjectRecord[]; error?: string }>(poll, "读取执行状态失败");
+        if (!poll.ok) throw new Error(snapshot.error || "读取执行状态失败");
+        const items = snapshot.projects ?? [];
+        setProjects(items);
+        const current = items.find((item) => item.id === projectId);
+        if (!current) throw new Error("项目状态已丢失");
+        setGenProgress(STAGE_LABELS[current.currentStage || ""] || `正在执行：${current.currentStage || current.status}`);
+        if (current.status === "failed") throw new Error(`真实执行失败（阶段：${current.currentStage || "unknown"}）`);
+        if (current.status === "delivered") {
+          if (!isExternalDeliveryUrl(current.previewUrl)) throw new Error("执行器未返回通过校验的 HTTPS 部署地址");
+          setPreviewUrl(current.previewUrl);
+          return;
+        }
       }
-
-      // Persist delivery so the project list reflects a real external URL.
-      const patch = await fetch("/api/projects", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: activeProjectId, status: "delivered", currentStage: "delivered", previewUrl: data.previewUrl }),
-      });
-      const patchData = await readJsonResponse<{ project?: ProjectRecord; error?: string }>(patch, "更新项目状态失败");
-      if (!patch.ok || !patchData.project) throw new Error(patchData.error || "更新项目状态失败");
-
-      setPreviewUrl(data.previewUrl);
-      setProjects((items) => items.map((item) => (item.id === activeProjectId ? patchData.project as ProjectRecord : item)));
+      throw new Error("任务仍在执行，请稍后从项目列表查看状态");
     } catch (error) {
       const message = error instanceof Error ? error.message : "生成失败";
       setGenError(message.length > 600 ? `${message.slice(0, 600)}…` : message);
@@ -211,6 +216,10 @@ export function MobileBuildApp() {
       setGenerating(false);
       setGenProgress("");
     }
+  }
+
+  function handleGenerate() {
+    void runProject(activeProjectId);
   }
 
   if (authState === "checking") {
@@ -224,7 +233,7 @@ export function MobileBuildApp() {
           <div className="auth-hero">
             <div className="brand-mark"><Icon name="spark" /></div>
             <div><p className="eyebrow">MOBILE BUILD</p><h1>一句话，<br />启动真实构建流程。</h1></div>
-            <p className="auth-copy">需求先进入 Mobile Spec，再由本机或云端 Agent 实现、验证和发布。</p>
+            <p className="auth-copy">需求经 Codex API 进入 Mobile Spec，再由受信任 Runner 实现、验证和发布。</p>
           </div>
           <form className="login-form" onSubmit={handleLogin}>
             <label><span>账号</span><input name="username" defaultValue="jonas" autoComplete="username" required /></label>
@@ -232,7 +241,7 @@ export function MobileBuildApp() {
             {loginError ? <p className="form-error" role="alert">{loginError}</p> : null}
             <button className="primary-button login-button" type="submit" disabled={loggingIn}>{loggingIn ? "正在登录…" : "登录"}<Icon name="chevron" /></button>
           </form>
-          <p className="auth-note"><span className="status-dot" />当前为流程 MVP · 不生成模板预览</p>
+          <p className="auth-note"><span className="status-dot" />没有真实部署，不返回 URL</p>
         </section>
       </main>
     );
@@ -242,7 +251,7 @@ export function MobileBuildApp() {
     <main className="app-shell">
       <header className="topbar">
         <button className="icon-button" aria-label="打开项目菜单" onClick={() => setSheet("menu")}><Icon name="menu" /></button>
-        <div className="topbar-title"><strong>Mobile Build</strong><span><i className="status-dot" />流程方案整理中</span></div>
+        <div className="topbar-title"><strong>Mobile Build</strong><span><i className="status-dot" />真实构建 · 证据式交付</span></div>
         <button className="new-button" aria-label="新建需求" onClick={resetRequest}><Icon name="plus" /></button>
       </header>
 
@@ -261,12 +270,12 @@ export function MobileBuildApp() {
             <div className="message-user"><p>{submittedPrompt}</p></div>
             <div className="message-agent">
               <div className="agent-avatar"><Icon name="spark" /></div>
-              <div><p className="agent-label">需求已保存</p><p>已原样保存为待执行需求，没有做关键词分类，也没有生成模板页面。下一步接入任务协调服务后，才会触发真实 Mobile Spec artifacts 和 Agent 执行。</p></div>
+              <div><p className="agent-label">需求已保存</p><p>已原样保存，没有关键词分类或模板替换。点击“开始真实构建”后，服务端才会派发 Codex 任务。</p></div>
             </div>
             <article className="plan-card scope-card">
-              <div className="plan-head"><div><span>执行目标</span><h3>{executor === "local" ? "Desktop Agent" : executor === "cloud" ? "Cloud Agent" : "自动选择"}</h3></div><span className="version-pill">DRAFT</span></div>
-              <div className="truth-note"><strong>当前没有伪造构建结果</strong><span>未产生代码、测试结论、部署记录或 URL。只有 DeploymentProvider 真正返回外部地址后，项目才可标记为已交付。</span></div>
-              <div className="plan-actions"><button className="primary-button" onClick={handleGenerate} disabled={!submittedPrompt || !activeProjectId || generating}>{generating ? "生成中…" : "生成项目"}<Icon name="spark" /></button><button className="secondary-button" onClick={() => { setPrompt(submittedPrompt); setSubmittedPrompt(""); }} disabled={generating}>修改需求</button><button className="secondary-button" onClick={() => setSheet("workflow")}>查看执行流程<Icon name="chevron" /></button></div>
+              <div className="plan-head"><div><span>执行目标</span><h3>Codex Runner</h3></div><span className="version-pill">REAL</span></div>
+              <div className="truth-note"><strong>只接受真实交付证据</strong><span>必须同时通过 Mobile Spec、生产构建、部署和健康检查，才会出现可点击的 HTTPS 结果地址。</span></div>
+              <div className="plan-actions"><button className="primary-button" onClick={handleGenerate} disabled={!submittedPrompt || !activeProjectId || generating}>{generating ? "真实构建中…" : "开始真实构建"}<Icon name="spark" /></button><button className="secondary-button" onClick={() => { setPrompt(submittedPrompt); setSubmittedPrompt(""); }} disabled={generating}>修改需求</button><button className="secondary-button" onClick={() => setSheet("workflow")}>查看执行流程<Icon name="chevron" /></button></div>
               {generating || previewUrl || genError ? (
                 <div className="generation-status">
                   {previewUrl ? (
@@ -282,9 +291,6 @@ export function MobileBuildApp() {
       </section>
 
       <form className="composer" onSubmit={handlePrompt}>
-        <div className="executor-compact" role="group" aria-label="选择执行位置">
-          {(["auto", "local", "cloud"] as ExecutorMode[]).map((mode) => <button type="button" key={mode} className={executor === mode ? "active" : ""} onClick={() => setExecutor(mode)}>{mode === "auto" ? "自动" : mode === "local" ? "本机" : "云端"}</button>)}
-        </div>
         <div className="composer-inner"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="输入完整需求；可同时粘贴相关链接…" rows={1} aria-label="项目需求" /><button type="submit" disabled={!prompt.trim() || saving} aria-label="保存需求"><Icon name="send" /></button></div>
         <div className="composer-meta"><span><i className="status-dot" />{saving ? "正在保存" : "只保存原始需求"}</span><span>{saveError || "不会匹配模板"}</span></div>
       </form>
@@ -298,7 +304,7 @@ export function MobileBuildApp() {
           <div className="recent-projects">
             <div className="list-heading"><span>已保存需求</span><small>{projects.length}</small></div>
             {projects.length ? projects.slice(0, 8).map((item) => {
-              const row = <><span>{item.name.slice(0, 1)}</span><div><strong>{item.name}</strong><small>{isExternalDeliveryUrl(item.previewUrl) ? "已由部署平台交付" : "待接入真实执行器"}</small></div>{isExternalDeliveryUrl(item.previewUrl) ? <Icon name="external" /> : <Icon name="chevron" />}</>;
+              const row = <><span>{item.name.slice(0, 1)}</span><div><strong>{item.name}</strong><small>{isExternalDeliveryUrl(item.previewUrl) ? "已由部署平台交付" : STAGE_LABELS[item.currentStage || ""] || item.status}</small></div>{isExternalDeliveryUrl(item.previewUrl) ? <Icon name="external" /> : <Icon name="chevron" />}</>;
               return isExternalDeliveryUrl(item.previewUrl) ? <a className="project-row" href={item.previewUrl} target="_blank" rel="noreferrer" key={item.id}>{row}</a> : <div className="project-row" key={item.id}>{row}</div>;
             }) : <p className="empty-list">保存第一条完整需求后会显示在这里。</p>}
           </div>
@@ -310,7 +316,7 @@ export function MobileBuildApp() {
           <div className="sheet-handle" />
           <div className="sheet-title"><div><p className="eyebrow">DELIVERY PIPELINE</p><h3>真实执行链路</h3></div><button onClick={() => setSheet(null)}><Icon name="x" /></button></div>
           <div className="workflow-list">{WORKFLOW.map(([number, title, detail]) => <div key={number}><span>{number}</span><section><strong>{title}</strong><p>{detail}</p></section></div>)}</div>
-          <p className="workflow-boundary">当前完成的是需求收集、Mobile Spec 通用化与本机单任务入口；协调服务、事件流、云 Runner 和 DeploymentProvider 仍需按 WBS 实现。</p>
+          <p className="workflow-boundary">任一门禁失败就停止并显示真实错误。浏览器无权写入“已交付”；只有受信任的 Runner 携带完整证据回调后，系统才保存部署 URL。</p>
         </aside>
       ) : null}
     </main>

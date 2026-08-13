@@ -3,7 +3,6 @@
 //
 //   node bin/generate.mjs "做一个咖啡店官网" --out /tmp/gen
 //   node bin/generate.mjs "做一个咖啡店官网" --out /tmp/gen --model gpt-4o --serve
-//   node bin/generate.mjs "做一个咖啡店官网" --out /tmp/gen --no-spec   # skip phase 1
 //
 // By default runs the FULL pipeline: phase 1 authors a requirement-specific
 // spec through the mobile-spec workflow (propose->design->task), then phase 2
@@ -14,7 +13,7 @@ import { generate, MAX_ATTEMPTS } from "../src/generate.js";
 import { startPreview } from "../src/serve.js";
 
 function parseArgs(argv) {
-  const out = { requirement: "", out: "", model: "", serve: false, port: 0, noSpec: false };
+  const out = { requirement: "", out: "", model: "", serve: false, port: 0 };
   // Accept both `--flag=value` and `--flag value` forms.
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -25,7 +24,6 @@ function parseArgs(argv) {
     else if (token.startsWith("--port=")) out.port = Number(token.slice("--port=".length));
     else if (token === "--port") out.port = Number(argv[++i]);
     else if (token === "--serve") out.serve = true;
-    else if (token === "--no-spec") out.noSpec = true;
     else if (!out.requirement) out.requirement = token;
   }
   return out;
@@ -34,7 +32,7 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.requirement || !args.out) {
-    console.error('Usage: node bin/generate.mjs "<需求>" --out <dir> [--model X] [--serve] [--port N] [--no-spec]');
+    console.error('Usage: node bin/generate.mjs "<需求>" --out <dir> [--model X] [--serve] [--port N]');
     process.exit(2);
   }
   if (!process.env.OPENAI_API_KEY) {
@@ -46,7 +44,6 @@ async function main() {
     requirement: args.requirement,
     outDir: args.out,
     specWorkRoot: `${args.out}.spec`,
-    skipWorkflow: args.noSpec,
     openaiApiKey: process.env.OPENAI_API_KEY,
     model: args.model || undefined,
     onProgress: ({ stage, attempt, ok, reason }) => {
@@ -65,7 +62,6 @@ async function main() {
         outDir: result.outDir,
         attempts: result.attempts,
         specWorkflowOk: result.specWorkflowOk,
-        degradedReason: result.degradedReason,
       }),
     );
     process.exit(1);
@@ -86,7 +82,6 @@ async function main() {
         attempts: result.attempts,
         previewUrl,
         specWorkflowOk: result.specWorkflowOk,
-        degradedReason: result.degradedReason,
       },
       null,
       2,

@@ -20,7 +20,7 @@
 ## 目录
 
 - `apps/web/`：移动端需求入口（已实现）
-- `packages/codegen/`：Node 代码生成引擎（需求 → OpenAI → Next.js 项目 → 构建 → 预览 URL）+ 本地 HTTP runner
+- `packages/codegen/`：Node 执行器（需求 → Mobile Spec → OpenAI → Next.js 项目 → 构建）+ 本地开发 runner
 - `packages/dspec-legacy/`：保留的 `@didi/dspec@1.11.0` 原始快照
 - `packages/mobile-spec/`：`@mobile-app-build/mobile-spec` 通用化工作副本，完成验收前禁止发布
 - `docs/文档中心.md`：配套文档总入口与当前实现状态
@@ -64,9 +64,9 @@ npm install
 OPENAI_API_KEY=sk-... CODEGEN_MODEL=gpt-4o node runner.mjs   # http://localhost:5174
 ```
 
-在 Web 端保存一句需求后，点「生成项目」会调用 runner：runner 调 OpenAI 生成多页 Next.js 项目，执行 `npm install` + `next build`，用 `next start` 起一个本地预览，并把可点击的外部预览 URL 写回项目记录。
+在本地开发环境中，Web 端保存一句需求后可调用 runner：runner 必须先完整执行 Mobile Spec，再调用 OpenAI 生成多页 Next.js 项目，执行 `npm ci` + `next build`。本地 `next start` 地址只用于开发检查，不得写回为交付 URL。
 
-> 当前 runner 是开发期的本地替代；生产需要真实的云端 runner（见 `docs/`）。`apps/web` 跑在 workerd，无法自己 spawn `npm install` / `next build`，所以生成必须在独立 Node 进程里完成。
+> 当前仓库提供可验证的 Node 执行内核；生产网站必须通过独立 Cloud Runner 与 DeploymentProvider 调用它。`apps/web` 跑在 workerd，无法自己 spawn `npm ci` / `next build`，也不能访问浏览器用户的 `localhost`。
 
 使用已约定的 MVP 账号登录。
 

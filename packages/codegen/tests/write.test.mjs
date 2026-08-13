@@ -16,6 +16,9 @@ test("writeManifest writes nested files and creates parent dirs", async () => {
   const out = tmpOut();
   try {
     const count = await writeManifest(out, {
+      siteName: "测试网站",
+      brand: { accentColor: "#123456", mode: "light", slogan: "测试" },
+      navRoutes: [{ href: "/", fileSubpath: "app/page.tsx" }],
       files: [
         { path: "lib/data.ts", content: "export const x = 1;\n" },
         { path: "app/courses/page.tsx", content: "export default function Page() { return null; }\n" },
@@ -27,6 +30,8 @@ test("writeManifest writes nested files and creates parent dirs", async () => {
     const pageContent = "export default function Page() { return null; }\n";
     const page = await readFile(join(out, "app/courses/page.tsx"), "utf8");
     assert.equal(page, pageContent);
+    const manifest = JSON.parse(await readFile(join(out, "mobile-build-manifest.json"), "utf8"));
+    assert.equal(manifest.source, "requirement-and-mobile-spec");
   } finally {
     await rm(out, { recursive: true, force: true });
   }

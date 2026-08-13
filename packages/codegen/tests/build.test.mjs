@@ -1,4 +1,4 @@
-// Integration test (no API key needed): copies the golden fitness-web sample
+// Integration test (no API key needed): copies a neutral buildable fixture
 // into a temp dir and runs the real build pipeline (npm install + next build)
 // against it. Proves runBuild succeeds on a known-good project, so any failure
 // in the full pipeline can be attributed to the LLM's output, not the engine.
@@ -13,13 +13,12 @@ import test from "node:test";
 import { runBuild } from "../src/build.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(here, "..", "..", "..");
-const FIXTURE = join(repoRoot, "generated", "fitness-web");
+const FIXTURE = join(here, "fixtures", "buildable-site");
 
 const SKIP = new Set(["node_modules", ".next", ".git", ".turbo", ".openai"]);
 
 test(
-  "runBuild goes green on the golden fitness-web fixture",
+  "runBuild goes green on the neutral buildable fixture",
   { timeout: 240_000 },
   async () => {
     assert.ok(existsSync(FIXTURE), `fixture exists: ${FIXTURE}`);

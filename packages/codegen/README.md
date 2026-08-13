@@ -1,82 +1,47 @@
 # @mobile-app-build/codegen
 
-Node codegen engine: **one-sentence requirement → OpenAI → real Next.js project → `npm install` + `next build` → clickable preview URL**.
+Node 执行器：**一句需求 → Mobile Spec → OpenAI 代码生成 → 可复现安装 → Next.js 生产构建**。
 
-It runs as a **plain Node process**, separate from `apps/web`. `apps/web` is bundled into workerd even in `npm run dev` (`@cloudflare/vite-plugin` + `@cloudflare/unenv-preset`), which stubs `node:child_process` and the real `node:fs` — so it **cannot** spawn `npm install` / `next build` itself. This package is that missing execution surface, wrapped in a tiny local HTTP runner that stands in for the (not-yet-built) cloud agent.
+它运行在独立 Node 进程中，不能放进 `apps/web` 的 Cloudflare Worker。Worker 只保存项目与任务状态；Cloud Runner 负责文件、子进程和部署。
 
-## Pipeline
+## 硬性流程
 
-**Phase 1 — spec workflow (optional, default on).** `runSpecWorkflow()` authors a *requirement-specific* OpenSpec spec through the real mobile-spec state machine, in an isolated workspace, via the `mobile-spec` bin run as a subprocess:
+1. 保存完整原始需求。
+2. `runSpecWorkflow()` 驱动真实 Mobile Spec：Proposal → Specs → Design/Review → Tasks，并逐阶段执行门禁。
+3. 只有全部 Mobile Spec 门禁通过后，才把本次 artifacts 交给模型生成 `SiteManifest`。
+4. 生成器从中立 Next.js 模板初始化项目，写入完整源码和 `mobile-build-manifest.json`。
+5. 执行 `npm ci` 和 `npm run build`；失败日志回传模型修复，最多三轮。
+6. 构建成功的源码由 DeploymentProvider 发布。只有 Provider 返回外部 HTTPS URL 后才可标记为 delivered。
 
-1. `createSpecWorkspace()` — writes a minimal `openspec/config.yaml` (`schema: h5-sdd`) + the requirement source. `init` is deliberately skipped (the schema resolves via mobile-spec's `__dirname` fallback), avoiding its `process.exit` hazard.
-2. For each stage `propose → design → task`: `preStage` → author the stage's artifacts with OpenAI (`spec-llm.js`) → `postNode` per artifact → `postStage` (runs the real gate). On a gate failure the gate message is fed back to the author fn and the stage retries (≤2). Output: `proposal.md` + `specs/<id>/spec.md` + `design.md` + `review.md` + `tasks.md`.
-3. The strict gates (`proposal-status:ready` + 未决问题 table, `review-status:pass`, `task-format`) are too fiddly to trust to the model, so the engine appends **deterministic footers** (`finalizeProposalMd` / `finalizeReviewMd`) that are guaranteed to pass — the LLM never writes `status:` lines or the 未决问题 section.
+Mobile Spec 是硬门禁，不存在跳过或主题示例兜底。仓库不包含任何业务主题模板；用户需求和本次 Mobile Spec 是唯一产品事实来源。
 
-**Phase 2 — code-gen.**
+## 环境
 
-1. `copyTemplate()` — copies `templates/next-web` (excluding `node_modules/.next/.git`) into a work dir.
-2. `callLLM()` — Chat Completions `.parse()` with structured outputs, forcing a `SiteManifest` (zod-validated) that lists the files to write.
-3. `writeManifest()` — writes each file, rejecting any path that escapes the work dir.
-4. `runBuild()` — `npm install` then `next build`; on failure, the log tail is fed back to the model.
-5. `generate()` — repeats 2–4 up to **3** times, returning the first green build (or the last failure).
-6. `startPreview()` — serves the built app with `next start` on an ephemeral port.
-
-When phase 1 succeeds, the authored `spec.md` (+ `proposal.md` / `design.md`) is the **authoritative anchor** for the code-gen prompt, replacing the static fitness sample. The golden `generated/fitness-web/lib/data.ts` is still embedded as a structural example (it teaches *how* to model data in `lib/data.ts`, independent of topic). On any phase-1 failure the engine **degrades gracefully** to the static fitness anchor and reports `specWorkflowOk:false` + `degradedReason` — code-gen still works; the workflow is a quality enhancer, not a hard prerequisite.
-
-## Environment
-
-| Var | Default | Purpose |
-| --- | --- | --- |
-| `OPENAI_API_KEY` | — | **Required** for any LLM call. Never read by `apps/web`. |
-| `CODEGEN_MODEL` | `gpt-4o` | Model id. Must support structured outputs. Set to whatever your key allows (`gpt-4o`, `gpt-4o-mini`, `o4-mini`, `gpt-5-codex`, …). |
-| `CODEGEN_NO_SPEC` | unset | `=1` skips phase 1 entirely (static fitness anchor, original single-call path). |
-| `CODEGEN_RUNNER_PORT` | `5174` | Runner HTTP port. |
-| `CODEGEN_WEB_ORIGIN` | `http://localhost:5173` | Allowed CORS origin (the `apps/web` dev origin). |
-| `CODEGEN_TIMEOUT_MS` | `600000` | Per-generation hard cap (phase 1 + 2 can exceed 5 min). |
-| `MOBILE_SPEC_HOME_OVERRIDE` | unset | Per-slug sidecar isolation — **set by the engine**, don't set manually. |
-| `MOBILE_SPEC_WORKFLOW_SKIP_MONITOR` | unset | `=1` skips the blocking monitor `spawnSync` in mobile-spec hooks — **load-bearing**; always set by `mobileSpecEnv()`. |
-| `MOBILE_SPEC_SKIP_EVAL` | unset | `=1` defensive (only `init` reads it; we skip `init`). Always set by `mobileSpecEnv()`. |
-
-> `packages/mobile-spec`'s own deps (js-yaml etc.) must be installed locally (`packages/mobile-spec` has its own `package.json`).
+| 变量 | 默认值 | 用途 |
+|---|---|---|
+| `OPENAI_API_KEY` | 无 | 本地 runner 调用 OpenAI 时必需 |
+| `CODEX_RUNNER_TOKEN` | 无 | 控制面调用 Runner 的 Bearer token |
+| `RUNNER_CALLBACK_TOKEN` | 无 | Runner 回写控制面的 Bearer token |
+| `CODEGEN_MODEL` | `gpt-4o` | 支持 Structured Outputs 的模型 ID |
+| `CODEGEN_RUNNER_PORT` | `5174` | 本地 runner 端口 |
+| `CODEGEN_WEB_ORIGIN` | `http://localhost:5173` | 本地 CORS 来源 |
+| `CODEGEN_TIMEOUT_MS` | `600000` | 单次生成超时 |
 
 ## CLI
 
 ```bash
-# Full pipeline: phase 1 (spec workflow) + phase 2 (code-gen). Authored spec
-# lands in /tmp/gen.spec/openspec/changes/<change>/ for inspection.
-OPENAI_API_KEY=sk-... node bin/generate.mjs "做一个咖啡店官网" --out /tmp/gen
-# add --serve to also start a preview, --model to override CODEGEN_MODEL
-OPENAI_API_KEY=sk-... node bin/generate.mjs "做一个咖啡店官网" --out /tmp/gen --serve
-# skip phase 1 (static fitness anchor — the original single-call path)
-OPENAI_API_KEY=sk-... node bin/generate.mjs "做一个咖啡店官网" --out /tmp/gen --no-spec
+OPENAI_API_KEY=sk-... node bin/generate.mjs "做一个社区咖啡店官网" --out /tmp/coffee-site
 ```
 
-## Local runner (what `apps/web` talks to)
+`runner.mjs` 提供受鉴权的异步 `/jobs` 协议，并回写阶段与交付证据。它必须运行在具备 Node、文件系统、子进程和外网能力的常驻执行环境。
+
+`--serve` 与 Runner 内部 localhost 只用于健康检查，不是交付 URL。未接入真实 DeploymentProvider 时任务明确失败，绝不返回 localhost 或站内假预览。
+
+## 测试
 
 ```bash
-npm install
-OPENAI_API_KEY=sk-... CODEGEN_MODEL=gpt-4o node runner.mjs
-# -> http://localhost:5174
-```
-
-- `GET /health` → `{ ok, openaiKeyPresent }` (UI preflight).
-- `POST /generate { prompt, projectName?, model? }` → on success `{ ok, previewUrl, buildOk, attempts, specWorkflowOk, degradedReason }`; on failure HTTP 500 `{ ok:false, error, buildLog }`. `specWorkflowOk:false` means phase 1 degraded to the static anchor (the build can still succeed).
-
-Work dirs live in `<repo>/.codegen/work/<slug>` (gitignored); spec workspaces in `<repo>/.codegen/spec/<slug>`.
-
-## Tests (no key needed)
-
-```bash
-npm install
+npm ci
 npm test
 ```
 
-- `template` / `write` / `manifest-schema`: fast unit tests.
-- `spec-finalize`: unit-tests the deterministic gate-passing footers (status line count, 未决问题 table shape, idempotency).
-- `spec-workspace`: workspace bootstrap, `runMobileSpec` JSON-parsing on success **and** on a gate failure (non-zero exit), and per-workspace sidecar isolation.
-- `spec-workflow-drive`: **keystone** — drives the propose stage through the *real* mobile-spec gates (no key) using the golden fitness artifacts + `finalizeProposalMd`, asserting `checks/propose.json` `ok===true`. Proves the driving loop + deterministic footers satisfy the actual gates.
-- `build`: copies `generated/fitness-web` to a temp dir and runs the real `npm install` + `next build` (~1–2 min, needs network). This is the proof that the build phase goes green on a known-good fixture.
-
-## Status & caveats
-
-Dev-only. The localhost preview is not a production deployment — a real cloud runner (see `docs/`) is still future work. The OpenAI SDK is pinned to `^4` with `zod ^3` because that pair's `zodResponseFormat` / `.parse()` path is the most thoroughly battle-tested; bump both together if you need a newer major.
+测试覆盖 manifest 约束、安全写文件、中立模板复制、Mobile Spec 工作区与真实门禁，以及中立 fixture 的生产构建。

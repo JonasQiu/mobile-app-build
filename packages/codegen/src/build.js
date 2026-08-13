@@ -1,4 +1,4 @@
-// Runs `npm install` then `npm run build` (== `next build`) inside the
+// Runs a reproducible install then `npm run build` (== `next build`) inside the
 // generated project, streaming combined output to a buffer. Returns a concise
 // result: ok flag, exit code, and the tail of the log (enough to feed back to
 // the model on retry or to surface in the UI on hard failure).
@@ -55,15 +55,15 @@ export async function runBuild(outDir) {
 
   let install;
   try {
-    install = await run(npmBin, ["install", "--no-audit", "--no-fund"], cwd, extraEnv);
+    install = await run(npmBin, ["ci", "--no-audit", "--no-fund"], cwd, extraEnv);
   } catch (err) {
-    return { ok: false, exitCode: null, log: `npm install ${err.message}` };
+    return { ok: false, exitCode: null, log: `npm ci ${err.message}` };
   }
   if (install.code !== 0) {
     return {
       ok: false,
       exitCode: install.code,
-      log: tail(`$ npm install\n${install.stdout}\n${install.stderr}`),
+      log: tail(`$ npm ci\n${install.stdout}\n${install.stderr}`),
     };
   }
 
@@ -74,12 +74,12 @@ export async function runBuild(outDir) {
     return {
       ok: false,
       exitCode: null,
-      log: tail(`$ npm install\n${install.stdout}\n${install.stderr}\n$ npm run build\n${err.message}`),
+      log: tail(`$ npm ci\n${install.stdout}\n${install.stderr}\n$ npm run build\n${err.message}`),
     };
   }
 
   const log = tail(
-    `$ npm install\n${install.stdout}\n${install.stderr}\n$ npm run build\n${build.stdout}\n${build.stderr}`,
+    `$ npm ci\n${install.stdout}\n${install.stderr}\n$ npm run build\n${build.stdout}\n${build.stderr}`,
   );
   return { ok: build.code === 0, exitCode: build.code, log };
 }

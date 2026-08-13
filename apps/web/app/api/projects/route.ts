@@ -10,6 +10,75 @@ type ProjectRow = {
   updatedAt: string;
 };
 
+type RunnerJob = {
+  status?: string;
+  stage?: string;
+  url?: string;
+  error?: string;
+  evidence?: { mobileSpecPassed?: boolean; buildPassed?: boolean; deployPassed?: boolean };
+};
+
+function validDeliveryUrl(value: unknown) {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:"
+      && url.hostname !== "localhost"
+      && url.hostname !== "mobile-app-build-mvp.long229260097.chatgpt.site"
+      && !url.pathname.startsWith("/preview");
+  } catch {
+    return false;
+  }
+}
+
+async function syncRunnerState(userId: string, projects: ProjectRow[]) {
+  const endpoint = process.env.CODEX_RUNNER_URL;
+  const token = process.env.CODEX_RUNNER_TOKEN;
+  if (!endpoint || !token) return;
+  const origin = new URL(endpoint).origin;
+  await Promise.all(projects.filter((project) => project.status === "building").map(async (project) => {
+    try {
+      const response = await fetch(`${origin}/jobs/${encodeURIComponent(project.id)}`, {
+        headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+      });
+      if (!response.ok) return;
+      const data = await response.json() as { job?: RunnerJob };
+      const job = data.job;
+      if (!job) return;
+      if (job.status === "failed") {
+        await getD1().prepare(`UPDATE projects SET status = 'failed', current_stage = 'failed',
+          updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?`).bind(project.id, userId).run();
+        project.status = "failed";
+        project.currentStage = "failed";
+        return;
+      }
+      if (job.status === "delivered") {
+        const evidence = job.evidence;
+        if (!evidence?.mobileSpecPassed || !evidence.buildPassed || !evidence.deployPassed || !validDeliveryUrl(job.url)) {
+          await getD1().prepare(`UPDATE projects SET status = 'failed', current_stage = 'failed',
+            updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?`).bind(project.id, userId).run();
+          project.status = "failed";
+          project.currentStage = "failed";
+          return;
+        }
+        await getD1().prepare(`UPDATE projects SET status = 'delivered', current_stage = 'delivered', preview_url = ?,
+          updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?`).bind(job.url, project.id, userId).run();
+        project.status = "delivered";
+        project.currentStage = "delivered";
+        project.previewUrl = job.url || null;
+        return;
+      }
+      if (job.stage && ["mobile-spec", "implementation", "build", "deployment"].includes(job.stage)) {
+        await getD1().prepare(`UPDATE projects SET current_stage = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND owner_user_id = ?`).bind(job.stage, project.id, userId).run();
+        project.currentStage = job.stage;
+      }
+    } catch {
+      // A temporary Runner read failure must not invent a terminal state.
+    }
+  }));
+}
+
 export async function GET(request: Request) {
   const user = await requireSession(request);
   if (!user) return jsonError("未登录", 401);
@@ -17,6 +86,7 @@ export async function GET(request: Request) {
     current_stage AS currentStage, preview_url AS previewUrl, updated_at AS updatedAt
     FROM projects WHERE owner_user_id = ? ORDER BY updated_at DESC LIMIT 20`)
     .bind(user.id).all<ProjectRow>();
+  await syncRunnerState(user.id, result.results);
   return Response.json({ projects: result.results }, { headers: { "cache-control": "no-store" } });
 }
 
@@ -29,22 +99,15 @@ export async function POST(request: Request) {
   if (!name || !prompt) return jsonError("项目名称和描述不能为空", 400);
   const id = `prj_${crypto.randomUUID()}`;
   await getD1().prepare(`INSERT INTO projects (id, owner_user_id, name, prompt, status, current_stage)
-    VALUES (?, ?, ?, ?, 'draft', 'requirement')`).bind(id, user.id, name, prompt).run();
-  return Response.json({ project: { id, name, prompt, status: "draft", currentStage: "requirement", previewUrl: null } }, { status: 201 });
+    VALUES (?, ?, ?, ?, 'queued', 'requirement')`).bind(id, user.id, name, prompt).run();
+  return Response.json({ project: { id, name, prompt, status: "queued", currentStage: "requirement", previewUrl: null } }, { status: 201 });
 }
 
 export async function PATCH(request: Request) {
   const user = await requireSession(request);
   if (!user) return jsonError("未登录", 401);
-  const payload = await request.json().catch(() => null) as { id?: unknown; status?: unknown; currentStage?: unknown; previewUrl?: unknown } | null;
-  const id = typeof payload?.id === "string" ? payload.id : "";
-  const status = typeof payload?.status === "string" ? payload.status.slice(0, 30) : "building";
-  const currentStage = typeof payload?.currentStage === "string" ? payload.currentStage.slice(0, 40) : null;
-  const previewUrl = typeof payload?.previewUrl === "string" ? payload.previewUrl.slice(0, 1000) : null;
-  if (!id) return jsonError("缺少项目 ID", 400);
-  const result = await getD1().prepare(`UPDATE projects SET status = ?, current_stage = ?, preview_url = ?,
-    updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?`)
-    .bind(status, currentStage, previewUrl, id, user.id).run();
-  if (!result.meta.changes) return jsonError("项目不存在", 404);
-  return Response.json({ ok: true });
+  // A browser must never be able to claim a successful build or inject a URL.
+  // Only the trusted runner callback will transition a project after verified
+  // Mobile Spec, build, and deployment evidence exists.
+  return jsonError("项目状态由可信执行器更新，客户端不能直接标记交付", 403);
 }

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SiteManifest } from "../src/manifest-schema.js";
+import { SiteManifest, normalizeManifest } from "../src/manifest-schema.js";
 
 const VALID = {
-  siteName: "源动健身",
-  brand: { accentColor: "#a9ff57", mode: "dark", slogan: "动起来" },
+  siteName: "巷口咖啡",
+  brand: { accentColor: "#c97941", mode: "light", slogan: "认真做好每一杯" },
   navRoutes: [
     { href: "/", fileSubpath: "app/page.tsx" },
     { href: "/courses", fileSubpath: "app/courses/page.tsx" },
@@ -21,6 +21,8 @@ const VALID = {
     { path: "app/components/Footer.tsx", content: "export default function Footer(){return null;}\n" },
     { path: "app/components/Section.tsx", content: "export default function Section(){return null;}\n" },
     { path: "app/courses/page.tsx", content: "export default function Page(){return null;}\n" },
+    { path: "app/trainers/page.tsx", content: "export default function Page(){return null;}\n" },
+    { path: "app/contact/page.tsx", content: "export default function Page(){return null;}\n" },
   ],
 };
 
@@ -63,4 +65,15 @@ test("SiteManifest rejects more than 40 files", () => {
     content: "x",
   }));
   assert.equal(SiteManifest.safeParse({ ...VALID, files }).success, false);
+});
+
+test("normalizeManifest rejects a nav route without a generated page", () => {
+  const invalid = { ...VALID, files: VALID.files.filter((file) => file.path !== "app/contact/page.tsx") };
+  assert.throws(() => normalizeManifest(invalid), /missing its page file/);
+});
+
+test("normalizeManifest rejects build-time Google font downloads", () => {
+  const manifest = structuredClone(VALID);
+  manifest.files.find((file) => file.path === "app/layout.tsx").content = 'import { Geist } from "next/font/google";';
+  assert.throws(() => normalizeManifest(manifest), /must not download fonts/);
 });

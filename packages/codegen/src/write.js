@@ -17,5 +17,16 @@ export async function writeManifest(outDir, manifest) {
     await writeFile(abs, file.content, "utf8");
     count += 1;
   }
+  await writeFile(
+    resolve(root, "mobile-build-manifest.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      siteName: manifest.siteName,
+      brand: manifest.brand,
+      navRoutes: manifest.navRoutes,
+      source: "requirement-and-mobile-spec",
+    }, null, 2) + "\n",
+    "utf8",
+  );
   return count;
 }

@@ -12,6 +12,7 @@ test("mobile input preserves the requirement instead of selecting a keyword temp
   assert.match(app, /TEXT \+ LINKS/);
   assert.match(app, /只保存原始需求/);
   assert.match(app, /不会匹配模板/);
+  assert.match(app, /await runProject\(data\.project\.id\)/);
   assert.doesNotMatch(app, /function buildPlan/);
   assert.doesNotMatch(app, /previewKindForPrompt/);
   assert.doesNotMatch(app, /const FILES/);
@@ -23,23 +24,44 @@ test("the hosted control surface has no built-in generated-project preview route
   await assert.rejects(access(new URL("app/preview/PreviewProject.tsx", root)));
 });
 
-test("generation runs in an external codegen runner, not an apps/web API route", async () => {
+test("the browser dispatches a server-side job and never calls localhost", async () => {
   const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
-  // The UI talks to a separate Node runner (workerd can't spawn builds).
-  assert.match(app, /RUNNER_URL/);
-  assert.match(app, /\/generate/);
-  // There must be no in-worker generation route — builds never run inside apps/web.
+  assert.match(app, /api\/v1\/projects/);
+  assert.match(app, /\/jobs/);
+  assert.doesNotMatch(app, /RUNNER_URL/);
+  assert.doesNotMatch(app, /localhost:5174/);
   await assert.rejects(access(new URL("app/api/generate/route.ts", root)));
-  // The external engine package exists in the monorepo.
+  await access(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root));
+  const jobsRoute = await readFile(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root), "utf8");
+  assert.match(jobsRoute, /CODEX_RUNNER_URL/);
+  assert.match(jobsRoute, /CODEX_RUNNER_TOKEN/);
+  assert.doesNotMatch(jobsRoute, /callbackToken.*JSON\.stringify/s);
   await access(new URL("package.json", codegen));
   await access(new URL("src/generate.js", codegen));
 });
 
-test("a successful generation marks the project delivered with an external preview URL", async () => {
+test("only a trusted evidence callback may mark a project delivered", async () => {
   const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
-  // The PATCH that flips the saved requirement into a delivered, externally
-  // linkable project (rendered by the existing isExternalDeliveryUrl branch).
-  assert.match(app, /status:\s*"delivered"/);
-  assert.match(app, /currentStage:\s*"delivered"/);
-  assert.match(app, /previewUrl:\s*data\.previewUrl/);
+  const projectsRoute = await readFile(new URL("app/api/projects/route.ts", root), "utf8");
+  const deliveryRoute = await readFile(new URL("app/api/v1/projects/[projectId]/delivery/route.ts", root), "utf8");
+  assert.doesNotMatch(app, /method:\s*"PATCH"/);
+  assert.match(projectsRoute, /客户端不能直接标记交付/);
+  assert.match(deliveryRoute, /RUNNER_CALLBACK_TOKEN/);
+  assert.match(deliveryRoute, /export async function GET/);
+  assert.match(deliveryRoute, /oai-authenticated-user-email/);
+  assert.match(deliveryRoute, /mobileSpecPassed/);
+  assert.match(deliveryRoute, /buildPassed/);
+  assert.match(deliveryRoute, /deployPassed/);
+  assert.match(deliveryRoute, /url\.protocol === "https:"/);
+  assert.match(deliveryRoute, /url\.hostname !== controlHostname/);
+});
+
+test("project polling synchronizes trusted runner evidence before delivery", async () => {
+  const projectsRoute = await readFile(new URL("app/api/projects/route.ts", root), "utf8");
+  assert.match(projectsRoute, /CODEX_RUNNER_URL/);
+  assert.match(projectsRoute, /jobs\/\$\{encodeURIComponent\(project\.id\)\}/);
+  assert.match(projectsRoute, /mobileSpecPassed/);
+  assert.match(projectsRoute, /buildPassed/);
+  assert.match(projectsRoute, /deployPassed/);
+  assert.match(projectsRoute, /validDeliveryUrl\(job\.url\)/);
 });

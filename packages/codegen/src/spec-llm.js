@@ -8,36 +8,7 @@
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { z } from "zod";
-import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(here, "..", "..", "..");
-
-const TPL_DIR = join(repoRoot, "packages", "mobile-spec", "schemas", "h5-sdd", "schema", "templates");
-const GOLDEN_SPEC = join(repoRoot, "generated/fitness-web.spec/openspec/changes/fitness/specs/fitness/spec.md");
-const GOLDEN_PROPOSAL = join(repoRoot, "generated/fitness-web.spec/openspec/changes/fitness/proposal.md");
-
-function readOptional(absPath) {
-  try {
-    return readFileSync(absPath, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-// Templates = the format guide. Golden spec = the one-shot example of a good
-// codegen-friendly spec (NOT strict OpenSpec ## ADDED Requirements form).
-const TPL = {
-  proposal: readOptional(join(TPL_DIR, "proposal.md")),
-  spec: readOptional(join(TPL_DIR, "spec.md")),
-  design: readOptional(join(TPL_DIR, "design.md")),
-  review: readOptional(join(TPL_DIR, "review.md")),
-  tasks: readOptional(join(TPL_DIR, "tasks.md")),
-};
-const GOLDEN = { spec: readOptional(GOLDEN_SPEC), proposal: readOptional(GOLDEN_PROPOSAL) };
-
+import { callCodexStructured } from "./codex-cli.js";
 const DEFAULT_MODEL = "gpt-4o";
 
 const ProposalAuthor = z.object({
@@ -78,15 +49,14 @@ export function finalizeReviewMd(body) {
 
 function client(apiKey) {
   const key = apiKey || process.env.OPENAI_API_KEY;
-  if (!key) {
-    const err = new Error("OPENAI_API_KEY not set");
-    err.code = "NO_API_KEY";
-    throw err;
-  }
-  return { client: new OpenAI({ apiKey: key }), model: process.env.CODEGEN_MODEL || DEFAULT_MODEL };
+  return {
+    client: key ? new OpenAI({ apiKey: key }) : null,
+    model: process.env.CODEGEN_MODEL || DEFAULT_MODEL,
+  };
 }
 
 async function parseCall(client, model, schema, name, messages) {
+  if (!client) return callCodexStructured({ schema, name, messages });
   const result = await client.chat.completions.parse({
     model,
     messages,
@@ -106,14 +76,10 @@ export async function authorProposal({ requirement, apiKey, model }) {
     "你是一名资深前端 spec 作者。任务：为一句中文需求，产出可构建的多页 Next.js 网站的 Proposal 与 Spec。",
     "Spec 必须是【自由格式、面向代码生成】的结构（路由/页面表、共享组件、数据模型(lib/data.ts)的 TS 接口、关键交互、内容语言、视觉与设计、验收），不要使用 OpenSpec 的 `## ADDED Requirements` 严格格式。",
     "Proposal 正文只写：为什么做、做什么、不做什么。**不要**写 `status:` 行或 `## 未决问题` 段落（引擎会自动补上并通过门禁）。内容要具体、可信、简体中文。",
-    "下面是 Proposal 模板与 Spec 模板（仅作格式参考，Spec 用上面的自由格式）：",
-    `\n--- proposal 模板 ---\n${TPL.proposal}`,
-    `\n--- spec 模板 ---\n${TPL.spec}`,
-    "\n下面是一个已验证可构建的参考样例（健身网站）。学习其结构，再针对本次需求产出同等质量、主题不同的内容，严禁照抄健身主题：",
-    `\n--- 参考样例 proposal ---\n${GOLDEN.proposal || "(无)"}`,
-    `\n--- 参考样例 spec（自由格式）---\n${GOLDEN.spec || "(无)"}`,
+    "Proposal 正文必须清楚说明为什么做、做什么、不做什么；Spec 必须包含页面与路由、共享组件、数据模型、交互、状态、视觉约束和可验证验收标准。",
+    "只依据本次用户需求写规格，不使用任何示例项目、预设业务或固定页面。",
   ];
-  const user = `# 本次需求\n${requirement}\n\n请返回 pageSpecId（kebab-case）、proposalBodyMd（Proposal 正文，不含 status/未决问题）、specMd（自由格式 Spec）。主题不得与健身样例相同。`;
+  const user = `# 本次需求\n${requirement}\n\n请返回 pageSpecId（kebab-case）、proposalBodyMd（Proposal 正文，不含 status/未决问题）、specMd（自由格式 Spec）。所有内容必须可追踪到本次需求。`;
   const parsed = await parseCall(ai, model || defaultModel, ProposalAuthor, "proposal_author", [
     { role: "system", content: system.join("\n\n") },
     { role: "user", content: user },
@@ -129,8 +95,7 @@ export async function authorDesign({ requirement, proposalMd, specMd, apiKey, mo
   const { client: ai, model: defaultModel } = client(apiKey);
   const system = [
     "你是资深前端架构师。基于已确认的 Proposal 与 Spec，产出 Design（实现方案）与 Review（设计评审）。",
-    `Design 模板：\n${TPL.design}`,
-    `Review 模板：\n${TPL.review}`,
+    "Design 必须包含整体方案、实现改动、验证方案和必要的风险说明。",
     "Review 正文写完五维评审（越界/矛盾/遗漏/不可追踪/模糊项）即可。**不要**写 `status:` 行（引擎会自动补 `status: pass`）。",
   ];
   const user = `# 需求\n${requirement}\n\n# Proposal\n${proposalMd}\n\n# Spec\n${specMd}\n\n返回 designMd 与 reviewBodyMd（不含 status 行）。`;
@@ -145,7 +110,6 @@ export async function authorTasks({ requirement, proposalMd, specMd, designMd, a
   const { client: ai, model: defaultModel } = client(apiKey);
   const system = [
     "你是资深前端 TL。基于 Proposal/Spec/Design 拆解可执行的前端任务清单（tasks.md）。",
-    `模板：\n${TPL.tasks}`,
     "硬约束：每个任务必须是 `- [ ] X.Y 描述` 格式（X/Y 为数字，如 `2.1`）；至少一条；不要出现不带编号的 `- [ ]` 复选框；简体中文。",
   ];
   let user = `# 需求\n${requirement}\n\n# Spec\n${specMd}\n\n# Design\n${designMd || proposalMd}\n\n返回 tasksMd（严格使用 - [ ] X.Y 描述 格式）。`;

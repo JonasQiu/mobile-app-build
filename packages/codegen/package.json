@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Node codegen engine: requirement -> OpenAI -> Next.js project -> build -> preview URL. Runs in a plain Node process (NOT inside apps/web/workerd).",
+  "description": "Trusted Node runner: requirement -> Codex -> Mobile Spec -> Next.js build -> verified deployment URL.",
   "bin": {
     "mbcodegen": "bin/generate.mjs"
   },

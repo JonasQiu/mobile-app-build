@@ -5,22 +5,24 @@ import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { SiteManifest, normalizeManifest } from "./manifest-schema.js";
 import { buildPrompt } from "./prompt.js";
+import { callCodexStructured } from "./codex-cli.js";
 
 // A safe default; override with CODEGEN_MODEL to whatever the key supports
 // (e.g. gpt-4o, gpt-4o-mini, o4-mini, gpt-5-codex...). Structured outputs
 // (response_format json_schema) are required, so pick a model that supports it.
 const DEFAULT_MODEL = "gpt-4o";
 
-export async function callLLM({ requirement, attempt, prevBuildError, apiKey, model, specAnchor, proposalAnchor, designAnchor }) {
+export async function callLLM({ requirement, attempt, prevBuildError, apiKey, model, specAnchor, proposalAnchor, designAnchor, tasksAnchor }) {
   const key = apiKey || process.env.OPENAI_API_KEY;
-  if (!key) {
-    const err = new Error("OPENAI_API_KEY not set");
-    err.code = "NO_API_KEY";
-    throw err;
-  }
-  const client = new OpenAI({ apiKey: key });
-  const messages = buildPrompt({ requirement, attempt, prevBuildError, specAnchor, proposalAnchor, designAnchor });
+  const messages = buildPrompt({ requirement, attempt, prevBuildError, specAnchor, proposalAnchor, designAnchor, tasksAnchor });
   const resolvedModel = model || process.env.CODEGEN_MODEL || DEFAULT_MODEL;
+
+  if (!key) {
+    const parsed = await callCodexStructured({ schema: SiteManifest, name: "site_manifest", messages });
+    return normalizeManifest(parsed);
+  }
+
+  const client = new OpenAI({ apiKey: key });
 
   const result = await client.chat.completions.parse({
     model: resolvedModel,
