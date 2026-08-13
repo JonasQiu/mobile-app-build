@@ -2,7 +2,7 @@
 // asynchronously and reports stage/evidence to the server-owned callback.
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +28,7 @@ const SPEC_WORK_ROOT = join(repoRoot, ".codegen", "spec");
 const configuredPort = process.env.CODEGEN_RUNNER_PORT;
 const PORT = configuredPort === undefined ? 5174 : Number(configuredPort);
 const GENERATION_TIMEOUT_MS = Number(process.env.CODEGEN_TIMEOUT_MS) || 600_000;
+const DEPLOYMENT_HEALTH_TIMEOUT_MS = Math.max(30_000, Number(process.env.CODEGEN_DEPLOYMENT_HEALTH_TIMEOUT_MS) || 120_000);
 const RUNNER_TOKEN = process.env.CODEX_RUNNER_TOKEN || "";
 const CALLBACK_TOKEN = process.env.RUNNER_CALLBACK_TOKEN || "";
 const jobs = new Map();
@@ -117,6 +118,27 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+async function hasDeploymentCheckpoint(outDir, specWorkRoot, requirement) {
+  if (!existsSync(join(outDir, ".next", "BUILD_ID")) || !existsSync(join(outDir, "node_modules", ".bin", "next"))) {
+    return false;
+  }
+  const requirementDir = join(specWorkRoot, "requirements");
+  let files;
+  try {
+    files = await readdir(requirementDir);
+  } catch {
+    return false;
+  }
+  for (const file of files.filter((name) => name.endsWith(".md"))) {
+    try {
+      if ((await readFile(join(requirementDir, file), "utf8")).trim() === requirement.trim()) return true;
+    } catch {
+      // A partial checkpoint is not safe to resume.
+    }
+  }
+  return false;
+}
+
 function send(res, status, body) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
   res.end(JSON.stringify(body));
@@ -159,11 +181,25 @@ async function deployPreview(preview) {
     const base = new URL(process.env.CODEGEN_PUBLIC_PREVIEW_BASE_URL);
     const local = new URL(preview.previewUrl);
     base.port = local.port;
-    return { url: base.toString().replace(/\/$/, ""), stop: () => preview.stop() };
+    return {
+      url: base.toString().replace(/\/$/, ""),
+      stop: () => preview.stop(),
+      isAlive: () => preview.isAlive(),
+    };
   }
   if (process.env.CODEGEN_DEPLOYMENT_PROVIDER === "cloudflare-quick-tunnel") {
-    const tunnel = await startQuickTunnel(preview.previewUrl);
-    return { url: tunnel.url, stop: () => { tunnel.stop(); preview.stop(); } };
+    try {
+      const tunnel = await startQuickTunnel(preview.previewUrl);
+      return {
+        url: tunnel.url,
+        stop: () => { tunnel.stop(); preview.stop(); },
+        isAlive: () => tunnel.isAlive() && preview.isAlive(),
+        diagnostics: () => tunnel.diagnostics(),
+      };
+    } catch (error) {
+      preview.stop();
+      throw error;
+    }
   }
   preview.stop();
   throw new Error("DeploymentProvider is not configured; refusing to return localhost");
@@ -174,27 +210,52 @@ async function executeJob(job) {
   const slug = slugify(job.projectId);
   const outDir = join(WORK_ROOT, slug);
   const specWorkRoot = join(SPEC_WORK_ROOT, slug);
+  let deployment = null;
   try {
-    await rm(outDir, { recursive: true, force: true });
-    await callback(job.callbackUrl, { status: "building", stage: "mobile-spec" });
-    const result = await withTimeout(generate({
-      requirement: job.requirement,
-      outDir,
-      specWorkRoot,
-      openaiApiKey: process.env.OPENAI_API_KEY,
-      onProgress: (event) => reportProgress(job.projectId, event),
-    }), GENERATION_TIMEOUT_MS, "generation");
-    if (!result.ok) throw new Error(`build failed after ${result.attempts} attempts`);
+    const resumable = await hasDeploymentCheckpoint(outDir, specWorkRoot, job.requirement);
+    let result;
+    if (resumable) {
+      result = { ok: true, outDir, attempts: 0 };
+      updateJob(job.projectId, {
+        status: "running",
+        stage: "deployment",
+        progress: 90,
+      }, "检测到同一需求已通过 Mobile Spec 和生产构建，继续部署，无需重复生成");
+    } else {
+      await rm(outDir, { recursive: true, force: true });
+      await callback(job.callbackUrl, { status: "building", stage: "mobile-spec" });
+      result = await withTimeout(generate({
+        requirement: job.requirement,
+        outDir,
+        specWorkRoot,
+        openaiApiKey: process.env.OPENAI_API_KEY,
+        onProgress: (event) => reportProgress(job.projectId, event),
+      }), GENERATION_TIMEOUT_MS, "generation");
+      if (!result.ok) throw new Error(`build failed after ${result.attempts} attempts`);
+    }
 
     updateJob(job.projectId, { status: "running", stage: "deployment", progress: PROGRESS.deployment[0] }, PROGRESS.deployment[1]);
     await callback(job.callbackUrl, { status: "building", stage: "deployment" });
     const previous = previews.get(slug);
     if (previous) previous.stop();
     const preview = await startPreview(result.outDir);
-    const deployment = await deployPreview(preview);
+    deployment = await deployPreview(preview);
     previews.set(slug, deployment);
     const url = deployment.url;
-    await waitForPublicUrl(url);
+    await waitForPublicUrl(url, {
+      timeoutMs: DEPLOYMENT_HEALTH_TIMEOUT_MS,
+      isAlive: deployment.isAlive,
+      onAttempt: ({ attempt, status, error }) => {
+        const detail = status ? `HTTP ${status}` : error || "暂未收到公网响应";
+        const passed = status > 0 && status < 500;
+        updateJob(job.projectId, {
+          status: "running",
+          stage: "deployment",
+          progress: passed ? 98 : Math.min(97, 92 + attempt),
+          kind: passed ? "progress" : "warning",
+        }, `公网健康检查第 ${attempt} 次：${detail}${passed ? "，检查通过" : "，等待后重试"}`);
+      },
+    });
     await callback(job.callbackUrl, {
       status: "delivered",
       stage: "delivered",
@@ -210,6 +271,10 @@ async function executeJob(job) {
       evidence: { mobileSpecPassed: true, buildPassed: true, deployPassed: true },
     }, PROGRESS.delivered[1]);
   } catch (error) {
+    if (deployment) {
+      if (previews.get(slug) === deployment) previews.delete(slug);
+      deployment.stop();
+    }
     const message = error instanceof Error ? error.message : String(error);
     updateJob(job.projectId, {
       id: job.id,

@@ -23,7 +23,7 @@ flowchart TD
   J --> K[历史详情中打开页面]
 ```
 
-执行页展示六个阶段：需求、Mobile Spec、Codex、构建、部署、完成。执行中每 15 秒同步百分比、当前 message 和最近事件，包含 Codex 生成、文件校验写入、构建修复与部署信息。历史项目可点击恢复同一详情视图，非进行中记录允许删除。
+执行页展示六个阶段：需求、Mobile Spec、Codex、构建、部署、完成。执行中每 15 秒同步百分比、当前 message 和最近事件，包含 Codex 生成、文件校验写入、构建修复，以及公网健康检查每次探测的 HTTP 或网络结果。历史项目可点击恢复同一详情视图，非进行中记录允许删除。
 
 ## 3. 已实现范围
 
@@ -76,6 +76,8 @@ flowchart TD
 - `npm run build` 成功。
 - DeploymentProvider 返回非 localhost、非控制站、非 `/preview` 的 HTTPS URL。
 - 公网健康检查返回非 5xx。
+- 临时隧道必须完成连接注册；健康检查在总时限内重试 DNS、连接与 5xx，并在最终失败时回收预览和隧道进程。
+- 同一项目仅在部署或健康检查失败时，可校验原始需求与生产构建 checkpoint 后直接继续部署，避免重复执行 Codex 和构建。
 - Runner 返回 `mobileSpecPassed`、`buildPassed`、`deployPassed` 三项证据。
 
 ## 7. 当前验收场景

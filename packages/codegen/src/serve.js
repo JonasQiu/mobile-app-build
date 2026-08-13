@@ -35,6 +35,7 @@ export async function startPreview(outDir, { port } = {}) {
   });
 
   let stopped = false;
+  const isAlive = () => !stopped && child.exitCode === null;
   const stop = () => {
     if (stopped) return;
     stopped = true;
@@ -65,5 +66,5 @@ export async function startPreview(outDir, { port } = {}) {
     throw new Error(`preview did not become healthy at ${previewUrl}`);
   }
 
-  return { previewUrl, port: chosenPort, child, stop };
+  return { previewUrl, port: chosenPort, child, stop, isAlive };
 }

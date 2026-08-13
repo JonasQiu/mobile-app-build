@@ -25,6 +25,8 @@ Runner 必须运行在具备文件系统、子进程和外网能力的独立环�
 
 状态中的事件只保留最近 24 条且当前为内存数据；Codex 生成、结构化结果、文件校验写入、构建修复与部署节点都有明确 message。正式 Cloud Runner 应持久化到控制面事件库。
 
+如果同一项目只在部署或公网健康检查阶段失败，Runner 会校验本地生产构建与原始需求 checkpoint，并从部署阶段继续，不重复调用 Codex 或执行生产构建。
+
 ## 环境变量
 
 | 变量 | 默认值 | 用途 |
@@ -38,10 +40,11 @@ Runner 必须运行在具备文件系统、子进程和外网能力的独立环�
 | `CODEX_MODEL` | Codex 默认 | Codex CLI 模型覆盖 |
 | `CODEGEN_RUNNER_PORT` | `5174` | Runner 监听端口 |
 | `CODEGEN_TIMEOUT_MS` | `600000` | 一次完整生成超时 |
+| `CODEGEN_DEPLOYMENT_HEALTH_TIMEOUT_MS` | `120000` | 公网部署健康检查总等待时间；单次网络探测有独立超时并自动重试 |
 | `CODEGEN_DISABLE_CALLBACK` | 未设置 | `1` 时由控制站主动拉取状态 |
 | `CODEGEN_DEPLOYMENT_PROVIDER` | 无 | 部署 Provider；当前验收值可为 `cloudflare-quick-tunnel` |
 | `CODEGEN_TUNNEL_BIN` | 无 | Quick Tunnel 使用的 `cloudflared` 路径 |
-| `CODEGEN_HEALTHCHECK_BIN` | 无 | 可选系统级健康检查命令（当前使用 curl） |
+| `CODEGEN_HEALTHCHECK_BIN` | 无 | 可选系统级健康检查命令（当前使用 curl）；DNS、连接与 HTTP 失败会进入 Runner 实时消息 |
 
 ## CLI 与测试
 

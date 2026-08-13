@@ -23,7 +23,12 @@ test("trusted runner fails closed when required secrets are missing", async () =
   assert.match(runner, /send\(res, 401, \{ error: "unauthorized runner request" \}\)/);
   assert.match(runner, /!CALLBACK_TOKEN \|\| \(!process\.env\.OPENAI_API_KEY && !process\.env\.CODEX_BIN\)/);
   assert.match(runner, /send\(res, 503, \{ error: "runner secrets are incomplete" \}\)/);
-  assert.match(runner, /waitForPublicUrl\(url\)/);
+  assert.match(runner, /waitForPublicUrl\(url,\s*\{/);
+  assert.match(runner, /CODEGEN_DEPLOYMENT_HEALTH_TIMEOUT_MS/);
+  assert.match(runner, /公网健康检查第 \$\{attempt\} 次/);
+  assert.match(runner, /if \(deployment\).*deployment\.stop\(\)/s);
+  assert.match(runner, /hasDeploymentCheckpoint\(outDir, specWorkRoot, job\.requirement\)/);
+  assert.match(runner, /继续部署，无需重复生成/);
   assert.match(runner, /CODEGEN_DEPLOYMENT_PROVIDER === "cloudflare-quick-tunnel"/);
   assert.match(runner, /req\.url\?\.startsWith\("\/jobs\/"\)/);
   assert.match(runner, /CODEGEN_DISABLE_CALLBACK === "1"/);
