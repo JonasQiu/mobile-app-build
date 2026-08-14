@@ -31,7 +31,9 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
     ? "delivered"
     : body?.status === "failed"
       ? "failed"
-      : body?.status === "paused" ? "paused" : "building";
+      : body?.status === "paused"
+        ? "paused"
+        : body?.status === "checkpointed" ? "ready" : "building";
   const stage = typeof body?.stage === "string" ? body.stage.slice(0, 40) : status;
   const url = typeof body?.url === "string" ? body.url.slice(0, 1000) : null;
 

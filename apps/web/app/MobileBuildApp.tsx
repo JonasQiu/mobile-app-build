@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useState } from "react";
 
 type AuthUser = { id: string; username: string };
 
@@ -15,9 +15,14 @@ type ProjectRecord = {
   executionProgress?: number;
   executionMessage?: string;
   executionEvents?: Array<{ id?: string; at?: string; message?: string; stage?: string; kind?: string; progress?: number }>;
+  executionCheckpoints?: ExecutionStage[];
 };
 
 type ExecutionCapacity = { active: number; max: number };
+type ExecutionMode = "continue" | "rerun" | "step";
+type ExecutionStage = "mobile-spec" | "implementation" | "build" | "deployment";
+type ArtifactFile = { name: string; label: string; format: "markdown" | "json" | "text"; content: string };
+type ArtifactResponse = { stage: ExecutionStage; checkpointed: boolean; artifacts: ArtifactFile[] };
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -55,6 +60,16 @@ const STAGES = [
   { key: "delivered", label: "完成", detail: "返回 URL" },
 ];
 
+const EXECUTION_STAGES: ExecutionStage[] = ["mobile-spec", "implementation", "build", "deployment"];
+const QUICK_ACTIONS: Array<{ label: string; mode: ExecutionMode; targetStage?: ExecutionStage }> = [
+  { label: "继续", mode: "continue" },
+  { label: "重跑", mode: "rerun" },
+  { label: "规格", mode: "step", targetStage: "mobile-spec" },
+  { label: "实现", mode: "step", targetStage: "implementation" },
+  { label: "构建", mode: "step", targetStage: "build" },
+  { label: "部署", mode: "step", targetStage: "deployment" },
+];
+
 function stageIndex(stage: string | null) {
   if (stage === "failed" || stage === "paused") return -1;
   return Math.max(0, STAGES.findIndex((item) => item.key === stage));
@@ -64,6 +79,80 @@ function formatEventTime(value?: string) {
   if (!value) return "刚刚";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "刚刚" : date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function nextExecutionStage(project?: ProjectRecord | null): ExecutionStage {
+  const completed = new Set(project?.executionCheckpoints || []);
+  return EXECUTION_STAGES.find((stage) => !completed.has(stage)) || "deployment";
+}
+
+function inlineMarkdown(text: string): ReactNode[] {
+  const tokens = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)]+\))/g);
+  return tokens.filter(Boolean).map((token, index) => {
+    if (token.startsWith("**") && token.endsWith("**")) return <strong key={index}>{token.slice(2, -2)}</strong>;
+    if (token.startsWith("`") && token.endsWith("`")) return <code key={index}>{token.slice(1, -1)}</code>;
+    const link = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+    if (link) return <a key={index} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>;
+    return token;
+  });
+}
+
+function MarkdownPreview({ content }: { content: string }) {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const blocks: ReactNode[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) { index += 1; continue; }
+    if (line.startsWith("```")) {
+      const language = line.slice(3).trim();
+      const code: string[] = [];
+      index += 1;
+      while (index < lines.length && !lines[index].startsWith("```")) code.push(lines[index++]);
+      index += 1;
+      blocks.push(<pre key={`code-${index}`} data-language={language || undefined}><code>{code.join("\n")}</code></pre>);
+      continue;
+    }
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      const level = heading[1].length;
+      const Tag = `h${level}` as keyof React.JSX.IntrinsicElements;
+      blocks.push(<Tag key={`heading-${index}`}>{inlineMarkdown(heading[2])}</Tag>);
+      index += 1;
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      const items: string[] = [];
+      while (index < lines.length && /^[-*]\s+/.test(lines[index])) items.push(lines[index++].replace(/^[-*]\s+/, ""));
+      blocks.push(<ul key={`list-${index}`}>{items.map((item, itemIndex) => <li key={itemIndex}>{inlineMarkdown(item)}</li>)}</ul>);
+      continue;
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      const items: string[] = [];
+      while (index < lines.length && /^\d+\.\s+/.test(lines[index])) items.push(lines[index++].replace(/^\d+\.\s+/, ""));
+      blocks.push(<ol key={`ordered-${index}`}>{items.map((item, itemIndex) => <li key={itemIndex}>{inlineMarkdown(item)}</li>)}</ol>);
+      continue;
+    }
+    if (line.startsWith("> ")) {
+      const quote: string[] = [];
+      while (index < lines.length && lines[index].startsWith("> ")) quote.push(lines[index++].slice(2));
+      blocks.push(<blockquote key={`quote-${index}`}>{inlineMarkdown(quote.join(" "))}</blockquote>);
+      continue;
+    }
+    if (/^---+$/.test(line.trim())) {
+      blocks.push(<hr key={`rule-${index}`} />);
+      index += 1;
+      continue;
+    }
+    const paragraph = [line.trim()];
+    index += 1;
+    while (index < lines.length && lines[index].trim() && !/^(#{1,6})\s|^```|^[-*]\s+|^\d+\.\s+|^>\s|^---+$/.test(lines[index])) {
+      paragraph.push(lines[index].trim());
+      index += 1;
+    }
+    blocks.push(<p key={`paragraph-${index}`}>{inlineMarkdown(paragraph.join(" "))}</p>);
+  }
+  return <div className="markdown-preview">{blocks}</div>;
 }
 
 async function readJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
@@ -102,7 +191,7 @@ export function MobileBuildApp() {
   const [executionCapacity, setExecutionCapacity] = useState<ExecutionCapacity>({ active: 0, max: 2 });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [sheet, setSheet] = useState<null | "menu" | "workflow">(null);
+  const [sheet, setSheet] = useState<null | "menu" | "workflow" | "artifacts">(null);
   const [activeProjectId, setActiveProjectId] = useState("");
   const [genProgress, setGenProgress] = useState("");
   const [genError, setGenError] = useState("");
@@ -110,6 +199,11 @@ export function MobileBuildApp() {
   const [deletingProjectId, setDeletingProjectId] = useState("");
   const [pausingProjectId, setPausingProjectId] = useState("");
   const [deleteError, setDeleteError] = useState("");
+  const [artifactStage, setArtifactStage] = useState<ExecutionStage>("mobile-spec");
+  const [artifactData, setArtifactData] = useState<ArtifactResponse | null>(null);
+  const [artifactLoading, setArtifactLoading] = useState(false);
+  const [artifactError, setArtifactError] = useState("");
+  const [activeArtifactName, setActiveArtifactName] = useState("");
   const activeProject = projects.find((item) => item.id === activeProjectId) ?? null;
   const generating = ["dispatching", "building"].includes(activeProject?.status || "");
   const hasActiveProjects = projects.some((item) => ["dispatching", "building"].includes(item.status));
@@ -261,27 +355,28 @@ export function MobileBuildApp() {
     }
   }
 
-  async function runProject(projectId: string) {
+  async function runProject(projectId: string, action: { mode: ExecutionMode; targetStage?: ExecutionStage } = { mode: "continue" }) {
     if (!projectId) return;
     const previousProject = projects.find((item) => item.id === projectId);
+    const optimisticStage = action.targetStage || (action.mode === "rerun" ? "mobile-spec" : nextExecutionStage(previousProject));
     setGenError("");
-    setGenProgress("正在派发 Codex 任务…");
-    setPreviewUrl("");
+    setGenProgress(action.mode === "step" ? `正在派发“${STAGE_LABELS[optimisticStage]}”单步任务…` : action.mode === "rerun" ? "正在派发完整重跑任务…" : "正在从成功检查点继续执行…");
+    if (action.mode !== "continue") setPreviewUrl("");
     setProjects((items) => items.map((item) => item.id === projectId ? {
       ...item,
       status: "dispatching",
-      currentStage: "mobile-spec",
+      currentStage: optimisticStage,
       executionProgress: 2,
       executionMessage: "正在向受信任 Runner 派发任务",
-      previewUrl: null,
+      previewUrl: action.mode === "continue" ? item.previewUrl : null,
     } : item));
     try {
       const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/jobs`, {
         method: "POST",
         headers: { "content-type": "application/json", "idempotency-key": `project-${projectId}-${Date.now()}` },
-        body: JSON.stringify({}),
+        body: JSON.stringify(action),
       });
-      const data = await readJsonResponse<{ job?: { id: string }; error?: string; code?: string }>(response, "Codex 任务派发失败");
+      const data = await readJsonResponse<{ job?: { id: string; status?: string; stage?: string; currentStage?: string; url?: string; progress?: number; message?: string; checkpoints?: ExecutionStage[] }; error?: string; code?: string }>(response, "Codex 任务派发失败");
       if (!response.ok || !data.job) {
         if (data.code !== "EXECUTOR_DISPATCH_UNKNOWN") {
           setProjects((items) => items.map((item) => item.id === projectId ? {
@@ -297,14 +392,32 @@ export function MobileBuildApp() {
         throw new Error(data.error || "Codex 任务派发失败");
       }
 
-      setExecutionCapacity((capacity) => ({ ...capacity, active: Math.min(capacity.max, capacity.active + 1) }));
+      if (data.job.status === "delivered" && isExternalDeliveryUrl(data.job.url || null)) {
+        setPreviewUrl(data.job.url);
+        setGenProgress(data.job.message || "全部步骤已成功，无需重复构建");
+        setProjects((items) => items.map((item) => item.id === projectId ? {
+          ...item,
+          status: "delivered",
+          currentStage: "delivered",
+          executionProgress: 100,
+          executionMessage: data.job?.message || "全部步骤已成功，无需重复构建",
+          executionCheckpoints: data.job?.checkpoints || item.executionCheckpoints,
+          previewUrl: data.job?.url || item.previewUrl,
+        } : item));
+        return;
+      }
+
+      if (!previousProject || !["dispatching", "building"].includes(previousProject.status)) {
+        setExecutionCapacity((capacity) => ({ ...capacity, active: Math.min(capacity.max, capacity.active + 1) }));
+      }
       setGenProgress("任务已进入云端执行队列…");
       setProjects((items) => items.map((item) => item.id === projectId ? {
         ...item,
         status: "building",
-        currentStage: "mobile-spec",
+        currentStage: data.job?.currentStage || data.job?.stage || optimisticStage,
         executionProgress: 4,
         executionMessage: "任务已进入云端执行队列，等待下一次 15 秒同步",
+        executionCheckpoints: data.job?.checkpoints || item.executionCheckpoints,
       } : item));
     } catch (error) {
       const message = error instanceof Error ? error.message : "生成失败";
@@ -313,7 +426,30 @@ export function MobileBuildApp() {
   }
 
   function handleGenerate() {
-    void runProject(activeProjectId);
+    void runProject(activeProjectId, { mode: "continue" });
+  }
+
+  async function openArtifacts(stage: ExecutionStage) {
+    if (!activeProjectId) return;
+    setArtifactStage(stage);
+    setArtifactData(null);
+    setArtifactError("");
+    setActiveArtifactName("");
+    setArtifactLoading(true);
+    setSheet("artifacts");
+    try {
+      const response = await fetch(`/api/v1/projects/${encodeURIComponent(activeProjectId)}/artifacts/${encodeURIComponent(stage)}`, {
+        headers: { accept: "application/json" },
+      });
+      const data = await readJsonResponse<ArtifactResponse & { error?: string }>(response, "读取步骤产物失败");
+      if (!response.ok) throw new Error(data.error || "读取步骤产物失败");
+      setArtifactData(data);
+      setActiveArtifactName(data.artifacts?.[0]?.name || "");
+    } catch (error) {
+      setArtifactError(error instanceof Error ? error.message : "读取步骤产物失败");
+    } finally {
+      setArtifactLoading(false);
+    }
   }
 
   async function pauseProject(projectId: string) {
@@ -330,14 +466,14 @@ export function MobileBuildApp() {
         status: "paused",
         currentStage: "paused",
         previewUrl: null,
-        executionMessage: "执行已暂停，可重新执行",
+        executionMessage: "执行已暂停，可从成功检查点继续",
         executionEvents: [
           ...(item.executionEvents || []),
-          { id: `paused-${Date.now()}`, at: new Date().toISOString(), stage: "paused", kind: "warning", message: "执行已暂停，可重新执行", progress: item.executionProgress || 0 },
+          { id: `paused-${Date.now()}`, at: new Date().toISOString(), stage: "paused", kind: "warning", message: "执行已暂停，可从成功检查点继续", progress: item.executionProgress || 0 },
         ].slice(-12),
       } : item));
       if (data.executionCapacity) setExecutionCapacity(data.executionCapacity);
-      setGenProgress("执行已暂停，可重新执行");
+      setGenProgress("执行已暂停，可从成功检查点继续");
     } catch (error) {
       setGenError(error instanceof Error ? error.message : "暂停任务失败");
     } finally {
@@ -353,6 +489,7 @@ export function MobileBuildApp() {
   const liveMessage = activeProject?.executionMessage || genProgress || (deliveryUrl ? "部署和健康检查均已通过" : "等待开始真实构建");
   const liveEvents = activeProject?.executionEvents?.filter((event) => event.message).slice(-6).reverse() ?? [];
   const capacityFull = executionCapacity.active >= executionCapacity.max;
+  const activeArtifact = artifactData?.artifacts.find((artifact) => artifact.name === activeArtifactName) || artifactData?.artifacts[0] || null;
 
   if (authState === "checking") {
     return <main className="auth-shell loading-shell"><div className="brand-mark"><Icon name="spark" /></div><div className="loading-line"><span /></div></main>;
@@ -402,16 +539,22 @@ export function MobileBuildApp() {
             <div className="message-user"><p>{submittedPrompt}</p></div>
             <div className="message-agent">
               <div className="agent-avatar"><Icon name="spark" /></div>
-              <div><p className="agent-label">{activeProject ? activeProject.name : "需求已保存"}</p><p>{activeProject?.status === "delivered" ? "该历史项目已完成，可查看交付页面，也可以重新执行。" : activeProject?.status === "paused" ? "该项目已经停止后续执行，可以从头重新执行。" : ["dispatching", "building"].includes(activeProject?.status || "") ? "该项目正在真实执行，下面会每 15 秒同步进度与消息。" : "已原样保存，没有关键词分类或模板替换。"}</p></div>
+              <div><p className="agent-label">{activeProject ? activeProject.name : "需求已保存"}</p><p>{activeProject?.status === "delivered" ? "该项目已完成；继续执行会复用全部成功步骤，重跑才会清除检查点。" : activeProject?.status === "ready" ? "指定步骤已完成，产物已保存；可以继续下一步或单独查看文档。" : activeProject?.status === "paused" ? "执行已暂停；继续会从已有成功检查点往后运行。" : ["dispatching", "building"].includes(activeProject?.status || "") ? "该项目正在真实执行，下面会每 15 秒同步进度与消息。" : "已原样保存，没有关键词分类或模板替换。"}</p></div>
             </div>
             <article className="plan-card scope-card">
-              <div className="plan-head"><div><span>项目执行</span><h3>{activeProject?.status === "delivered" ? "交付完成" : activeProject?.status === "failed" ? "执行失败" : activeProject?.status === "paused" ? "执行已暂停" : generating ? "正在构建" : "准备执行"}</h3></div><span className={`version-pill ${activeProject?.status === "failed" ? "failed" : activeProject?.status === "paused" ? "paused" : ""}`}>{progressValue}%</span></div>
+              <div className="plan-head"><div><span>项目执行</span><h3>{activeProject?.status === "delivered" ? "交付完成" : activeProject?.status === "ready" ? "步骤完成" : activeProject?.status === "failed" ? "执行失败" : activeProject?.status === "paused" ? "执行已暂停" : generating ? "正在构建" : "准备执行"}</h3></div><span className={`version-pill ${activeProject?.status === "failed" ? "failed" : activeProject?.status === "paused" ? "paused" : ""}`}>{progressValue}%</span></div>
               <div className="live-progress" aria-label={`执行进度 ${progressValue}%`}><span style={{ width: `${progressValue}%` }} /></div>
               <div className="stage-grid">
                 {STAGES.map((stage, index) => {
-                  const done = activeProject?.status === "delivered" || index < currentStageIndex;
-                  const running = !["failed", "paused"].includes(activeProject?.status || "") && index === currentStageIndex;
-                  return <div className={`stage-step ${done ? "done" : ""} ${running ? "running" : ""}`} key={stage.key}><i>{done ? "✓" : index + 1}</i><span><strong>{stage.label}</strong><small>{stage.detail}</small></span></div>;
+                  const artifactStageKey = EXECUTION_STAGES.includes(stage.key as ExecutionStage) ? stage.key as ExecutionStage : null;
+                  const checkpointDone = artifactStageKey && activeProject?.executionCheckpoints?.includes(artifactStageKey);
+                  const done = stage.key === "requirement" || activeProject?.status === "delivered" || Boolean(checkpointDone)
+                    || (!activeProject?.executionCheckpoints?.length && (index < currentStageIndex || (activeProject?.status === "ready" && index === currentStageIndex)));
+                  const running = generating && index === currentStageIndex;
+                  const content = <><i>{done ? "✓" : index + 1}</i><span><strong>{stage.label}</strong><small>{stage.detail}</small></span>{artifactStageKey ? <em>查看</em> : null}</>;
+                  return artifactStageKey
+                    ? <button type="button" className={`stage-step inspectable ${done ? "done" : ""} ${running ? "running" : ""}`} key={stage.key} onClick={() => void openArtifacts(artifactStageKey)}>{content}</button>
+                    : <div className={`stage-step ${done ? "done" : ""} ${running ? "running" : ""}`} key={stage.key}>{content}</div>;
                 })}
               </div>
               <section className="live-console" aria-live="polite">
@@ -423,7 +566,7 @@ export function MobileBuildApp() {
               <div className="plan-actions">
                 {generating ? <button className="primary-button pause-button" onClick={() => void pauseProject(activeProjectId)} disabled={activeProject?.status !== "building" || pausingProjectId === activeProjectId}>{activeProject?.status === "dispatching" ? "正在派发" : pausingProjectId === activeProjectId ? "暂停中…" : "暂停执行"}<Icon name="pause" /></button> : null}
                 {!generating && deliveryUrl ? <a className="primary-button" href={deliveryUrl} target="_blank" rel="noreferrer">打开交付页面<Icon name="external" /></a> : null}
-                {!generating ? <button className="primary-button" onClick={handleGenerate} disabled={!submittedPrompt || !activeProjectId || capacityFull}>{["paused", "failed", "delivered"].includes(activeProject?.status || "") ? "重新执行" : "开始真实构建"}<Icon name={["paused", "failed", "delivered"].includes(activeProject?.status || "") ? "refresh" : "spark"} /></button> : null}
+                {!generating ? <button className="primary-button" onClick={handleGenerate} disabled={!submittedPrompt || !activeProjectId || capacityFull}>{["ready", "paused", "failed", "delivered"].includes(activeProject?.status || "") ? "继续执行" : "开始真实构建"}<Icon name={["ready", "paused", "failed", "delivered"].includes(activeProject?.status || "") ? "refresh" : "spark"} /></button> : null}
                 <button className="secondary-button" onClick={() => setSheet("workflow")}>流程说明<Icon name="chevron" /></button>
               </div>
             </article>
@@ -432,6 +575,15 @@ export function MobileBuildApp() {
       </section>
 
       <form className="composer" onSubmit={handlePrompt}>
+        <div className="quick-actions" aria-label="执行快捷操作">
+          {QUICK_ACTIONS.map((action) => <button
+            type="button"
+            key={`${action.mode}-${action.targetStage || "all"}`}
+            disabled={!activeProjectId || generating || capacityFull}
+            title={action.mode === "step" ? `只执行${action.label}步骤` : action.mode === "rerun" ? "清除检查点并完整重跑" : "复用成功步骤继续执行"}
+            onClick={() => void runProject(activeProjectId, action)}
+          >{action.label}</button>)}
+        </div>
         <div className="composer-inner"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={capacityFull ? "已有 2 个需求执行中，请等待完成…" : "输入完整需求；可同时粘贴相关链接…"} rows={1} aria-label="项目需求" disabled={capacityFull} /><button type="submit" disabled={!prompt.trim() || saving || capacityFull} aria-label="保存需求"><Icon name="send" /></button></div>
         <div className="composer-meta"><span><i className="status-dot" />{saving ? "正在保存" : `只保存原始需求 · 执行中 ${executionCapacity.active}/${executionCapacity.max}`}</span><span>{saveError || (capacityFull ? "达到并发上限" : "不会匹配模板")}</span></div>
       </form>
@@ -456,6 +608,27 @@ export function MobileBuildApp() {
           <div className="sheet-title"><div><p className="eyebrow">DELIVERY PIPELINE</p><h3>真实执行链路</h3></div><button onClick={() => setSheet(null)}><Icon name="x" /></button></div>
           <div className="workflow-list">{WORKFLOW.map(([number, title, detail]) => <div key={number}><span>{number}</span><section><strong>{title}</strong><p>{detail}</p></section></div>)}</div>
           <p className="workflow-boundary">任一门禁失败就停止并显示真实错误。浏览器无权写入“已交付”；只有受信任的 Runner 携带完整证据回调后，系统才保存部署 URL。</p>
+        </aside>
+      ) : null}
+
+      {sheet === "artifacts" ? (
+        <aside className="bottom-sheet artifact-sheet">
+          <div className="sheet-handle" />
+          <div className="sheet-title"><div><p className="eyebrow">STEP ARTIFACTS</p><h3>{STAGE_LABELS[artifactStage]} · 产物预览</h3></div><button onClick={() => setSheet(null)}><Icon name="x" /></button></div>
+          {artifactLoading ? <div className="artifact-state"><i className="status-dot" />正在读取真实产物…</div> : null}
+          {artifactError ? <p className="artifact-error" role="alert">{artifactError}</p> : null}
+          {!artifactLoading && !artifactError && !artifactData?.checkpointed ? <div className="artifact-empty"><strong>该步骤还没有成功产物</strong><p>可点击输入框上方对应的单步按钮执行，成功后这里会出现可查看文件。</p></div> : null}
+          {artifactData?.artifacts.length ? (
+            <>
+              <div className="artifact-tabs" role="tablist" aria-label="产物文件">
+                {artifactData.artifacts.map((artifact) => <button type="button" role="tab" aria-selected={artifact.name === activeArtifact?.name} className={artifact.name === activeArtifact?.name ? "active" : ""} key={artifact.name} onClick={() => setActiveArtifactName(artifact.name)}><strong>{artifact.label}</strong><small>{artifact.name}</small></button>)}
+              </div>
+              <article className={`artifact-preview ${activeArtifact?.format || "text"}`}>
+                <header><span>{activeArtifact?.name}</span><small>{activeArtifact?.format === "markdown" ? "Markdown 预览" : activeArtifact?.format === "json" ? "JSON 产物" : "日志文本"}</small></header>
+                {activeArtifact?.format === "markdown" ? <MarkdownPreview content={activeArtifact.content} /> : <pre><code>{activeArtifact?.content}</code></pre>}
+              </article>
+            </>
+          ) : null}
         </aside>
       ) : null}
     </main>

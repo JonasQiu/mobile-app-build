@@ -118,19 +118,42 @@ test("Codex implementation progress exposes meaningful runner events", async () 
   assert.match(app, /STAGE_LABELS\[event\.stage/);
 });
 
-test("running projects can be paused and terminal projects can be rerun", async () => {
+test("running projects can be paused and terminal projects can continue or rerun", async () => {
   const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
   const pauseRoute = await readFile(new URL("app/api/v1/projects/[projectId]/pause/route.ts", root), "utf8");
   const jobsRoute = await readFile(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root), "utf8");
   const deliveryRoute = await readFile(new URL("app/api/v1/projects/[projectId]/delivery/route.ts", root), "utf8");
   const projectsRoute = await readFile(new URL("app/api/projects/route.ts", root), "utf8");
   assert.match(app, /暂停执行/);
-  assert.match(app, /重新执行/);
+  assert.match(app, /继续执行/);
+  assert.match(app, /重跑/);
   assert.match(app, /\/pause/);
   assert.match(pauseRoute, /requireSession/);
   assert.match(pauseRoute, /owner_user_id = \?/);
   assert.match(pauseRoute, /status = 'paused'/);
-  assert.match(jobsRoute, /forceRerun/);
+  assert.match(jobsRoute, /"continue", "rerun", "step"/);
+  assert.match(jobsRoute, /targetStage/);
   assert.match(deliveryRoute, /body\?\.status === "paused"/);
   assert.match(projectsRoute, /job\.status === "paused"/);
+});
+
+test("successful stages are reusable, individually executable, and expose Markdown artifacts", async () => {
+  const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
+  const projectsRoute = await readFile(new URL("app/api/projects/route.ts", root), "utf8");
+  const jobsRoute = await readFile(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root), "utf8");
+  const deliveryRoute = await readFile(new URL("app/api/v1/projects/[projectId]/delivery/route.ts", root), "utf8");
+  const artifactRoute = new URL("app/api/v1/projects/[projectId]/artifacts/[stage]/route.ts", root);
+  await access(artifactRoute);
+  assert.match(app, /label: "继续"/);
+  assert.match(app, /label: "重跑"/);
+  assert.match(app, /label: "规格"/);
+  assert.match(app, /label: "实现"/);
+  assert.match(app, /label: "构建"/);
+  assert.match(app, /label: "部署"/);
+  assert.match(app, /function MarkdownPreview/);
+  assert.match(app, /Markdown 预览/);
+  assert.match(app, /openArtifacts\(artifactStageKey\)/);
+  assert.match(jobsRoute, /复用同一需求中已经成功的步骤/);
+  assert.match(deliveryRoute, /body\?\.status === "checkpointed"/);
+  assert.match(projectsRoute, /job\.status === "checkpointed"/);
 });

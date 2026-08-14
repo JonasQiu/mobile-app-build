@@ -28,8 +28,8 @@ test("trusted runner fails closed when required secrets are missing", async () =
   assert.match(runner, /CODEGEN_DEPLOYMENT_HEALTH_TIMEOUT_MS/);
   assert.match(runner, /公网健康检查第 \$\{attempt\} 次/);
   assert.match(runner, /if \(deployment\).*deployment\.stop\(\)/s);
-  assert.match(runner, /!job\.forceRerun && await hasDeploymentCheckpoint\(outDir, specWorkRoot, job\.requirement\)/);
-  assert.match(runner, /继续部署，无需重复生成/);
+  assert.match(runner, /inspectCheckpoints\(\{ outDir, specWorkRoot, requirement: job\.requirement \}\)/);
+  assert.match(runner, /已复用“\$\{stageLabel\(stage\)\}”成功检查点，不重复执行/);
   assert.match(runner, /CODEGEN_DEPLOYMENT_PROVIDER === "cloudflare-quick-tunnel"/);
   assert.match(runner, /req\.url\?\.startsWith\("\/jobs\/"\)/);
   assert.match(runner, /CODEGEN_DISABLE_CALLBACK === "1"/);
@@ -48,6 +48,18 @@ test("trusted runner can cooperatively pause and cleanly rerun a job", async () 
   assert.match(runner, /controller\.abort\(new DOMException\("execution paused", "AbortError"\)\)/);
   assert.match(runner, /status: "paused"/);
   assert.match(runner, /callback\(job\.callbackUrl, \{ status: "paused", stage: "paused" \}\)/);
-  assert.match(runner, /forceRerun: body\?\.forceRerun === true/);
+  assert.match(runner, /\["continue", "rerun", "step"\]/);
+  assert.match(runner, /targetStage/);
   assert.match(runner, /signal,/);
+});
+
+test("trusted runner supports single-stage execution and artifact reads", async () => {
+  const runner = await readFile(runnerUrl, "utf8");
+  assert.match(runner, /status: "checkpointed"/);
+  assert.match(runner, /writeDeploymentEvidence/);
+  assert.match(runner, /readStageArtifacts/);
+  assert.match(runner, /const artifactMatch/);
+  assert.match(runner, /mobile-spec\|implementation\|build\|deployment/);
+  assert.match(runner, /执行实现前需要成功的 Mobile Spec 检查点/);
+  assert.match(runner, /执行构建前需要成功的实现检查点/);
 });

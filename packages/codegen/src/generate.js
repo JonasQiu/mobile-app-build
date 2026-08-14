@@ -1,18 +1,25 @@
-// Orchestrates the full pipeline:
-//   phase 1 (required): requirement -> mobile-spec workflow (propose->design->
-//     task) authors a requirement-specific spec, validated through real gates.
-//   phase 2: scaffold -> (Codex/OpenAI [anchored on the authored spec] -> write -> build)
-//     up to MAX_ATTEMPTS times, feeding the previous build error back to the model.
-// Phase 1 is a hard delivery gate. If Mobile Spec fails, no code is generated
-// and no URL can be returned.
-// Returns a result object the runner/CLI can hand to the caller.
+// Executes the checkpointable part of the delivery pipeline. The runner selects
+// the first stage that still needs work and may stop after one explicitly chosen
+// stage. Successful stages write durable evidence before returning.
 import { copyTemplate } from "./template.js";
 import { writeManifest } from "./write.js";
 import { runBuild } from "./build.js";
 import { callLLM } from "./llm.js";
 import { runSpecWorkflow } from "./spec-workflow.js";
+import {
+  loadSpecCheckpoint,
+  writeBuildLog,
+  writeOutputCheckpoint,
+  writeSpecCheckpoint,
+} from "./checkpoints.js";
 
 export const MAX_ATTEMPTS = 3;
+
+const GENERATION_STAGES = ["mobile-spec", "implementation", "build"];
+
+function stageIndex(stage) {
+  return GENERATION_STAGES.indexOf(stage);
+}
 
 export async function generate({
   requirement,
@@ -22,37 +29,58 @@ export async function generate({
   onProgress,
   specWorkRoot,
   signal,
+  startStage = "mobile-spec",
+  stopAfterStage = "build",
 }) {
   const progress = typeof onProgress === "function" ? onProgress : () => {};
+  const startIndex = stageIndex(startStage);
+  const stopIndex = stageIndex(stopAfterStage);
+  if (startIndex < 0 || stopIndex < startIndex) throw new Error(`invalid generation stage range: ${startStage} -> ${stopAfterStage}`);
+  if (!specWorkRoot) throw new Error("Mobile Spec workflow is required for every generation");
 
-  // --- phase 1: author a requirement-specific spec through mobile-spec ---
-  let specAnchor = "";
-  let proposalAnchor = "";
-  let designAnchor = "";
-  let tasksAnchor = "";
-  let specWorkflowOk = false;
-  if (!specWorkRoot) {
-    throw new Error("Mobile Spec workflow is required for every generation");
+  let sw;
+  if (startStage === "mobile-spec") {
+    progress({ stage: "spec-workflow" });
+    sw = await runSpecWorkflow({
+      requirement,
+      workRoot: specWorkRoot,
+      apiKey: openaiApiKey,
+      model,
+      onProgress: progress,
+      signal,
+    });
+    if (!sw.ok) throw new Error(`Mobile Spec workflow failed: ${sw.reason || "workflow did not complete"}`);
+    await writeSpecCheckpoint({ specWorkRoot, requirement, workflowResult: sw });
+  } else {
+    sw = await loadSpecCheckpoint({ specWorkRoot, requirement });
+    if (!sw) throw new Error("a successful Mobile Spec checkpoint is required before this stage");
   }
-  progress({ stage: "spec-workflow" });
-  const sw = await runSpecWorkflow({
-    requirement,
-    workRoot: specWorkRoot,
-    apiKey: openaiApiKey,
-    model,
-    onProgress: progress,
-    signal,
-  });
-  if (!sw.ok) throw new Error(`Mobile Spec workflow failed: ${sw.reason || "workflow did not complete"}`);
-  specWorkflowOk = true;
-  specAnchor = sw.specMd;
-  proposalAnchor = sw.proposalMd;
-  designAnchor = sw.designMd;
-  tasksAnchor = sw.tasksMd;
 
-  // --- phase 2: scaffold + code-gen ---
+  if (stopAfterStage === "mobile-spec") {
+    return { ok: true, outDir, buildOk: false, attempts: 0, manifest: null, specWorkflowOk: true, completedStage: "mobile-spec" };
+  }
+
+  if (startStage === "build") {
+    progress({ stage: "build", phase: "start", attempt: 1 });
+    const build = await runBuild(outDir, { signal });
+    await writeBuildLog(outDir, build.log);
+    if (build.ok) {
+      await writeOutputCheckpoint({ outDir, requirement, stage: "build" });
+      progress({ stage: "done", phase: "complete", attempt: 1 });
+    }
+    return {
+      ok: build.ok,
+      outDir,
+      buildOk: build.ok,
+      attempts: 1,
+      buildLog: build.log,
+      manifest: null,
+      specWorkflowOk: true,
+      completedStage: build.ok ? "build" : "implementation",
+    };
+  }
+
   copyTemplate(outDir);
-
   let attempt = 0;
   let prevBuildError = "";
   let manifest = null;
@@ -68,10 +96,10 @@ export async function generate({
         prevBuildError,
         apiKey: openaiApiKey,
         model,
-        specAnchor,
-        proposalAnchor,
-        designAnchor,
-        tasksAnchor,
+        specAnchor: sw.specMd,
+        proposalAnchor: sw.proposalMd,
+        designAnchor: sw.designMd,
+        tasksAnchor: sw.tasksMd,
         signal,
       });
     } catch (error) {
@@ -93,11 +121,27 @@ export async function generate({
     progress({ stage: "write", phase: "start", attempt });
     await writeManifest(outDir, manifest);
     signal?.throwIfAborted();
+    await writeOutputCheckpoint({ outDir, requirement, stage: "implementation" });
     progress({ stage: "write", phase: "complete", attempt, fileCount: Array.isArray(manifest.files) ? manifest.files.length : 0 });
+
+    if (stopAfterStage === "implementation") {
+      return {
+        ok: true,
+        outDir,
+        buildOk: false,
+        attempts: attempt,
+        buildLog: "",
+        manifest,
+        specWorkflowOk: true,
+        completedStage: "implementation",
+      };
+    }
 
     progress({ stage: "build", phase: "start", attempt });
     lastBuild = await runBuild(outDir, { signal });
+    await writeBuildLog(outDir, lastBuild.log);
     if (lastBuild.ok) {
+      await writeOutputCheckpoint({ outDir, requirement, stage: "build" });
       progress({ stage: "done", phase: "complete", attempt });
       return {
         ok: true,
@@ -106,7 +150,8 @@ export async function generate({
         attempts: attempt,
         buildLog: lastBuild.log,
         manifest,
-        specWorkflowOk,
+        specWorkflowOk: true,
+        completedStage: "build",
       };
     }
     prevBuildError = lastBuild.log;
@@ -120,6 +165,7 @@ export async function generate({
     attempts: attempt,
     buildLog: lastBuild?.log ?? "",
     manifest,
-    specWorkflowOk,
+    specWorkflowOk: true,
+    completedStage: "implementation",
   };
 }

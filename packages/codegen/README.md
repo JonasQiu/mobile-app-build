@@ -15,7 +15,7 @@ Runner 必须运行在具备文件系统、子进程和外网能力的独立环�
 7. 由 DeploymentProvider 发布，使用外部 HTTPS URL 做健康检查。
 8. 仅当三项 evidence 为真时返回 `delivered`。
 
-运行中的 job 可通过受鉴权的暂停接口中断；Runner 会把中断信号传递到 Mobile Spec、Codex/OpenAI、npm、构建、隧道和健康检查。暂停、失败或已交付项目再次派发时使用新 job，并从头执行。
+运行中的 job 可通过受鉴权的暂停接口中断；Runner 会把中断信号传递到 Mobile Spec、Codex/OpenAI、npm、构建、隧道和健康检查。每个成功阶段都会写入绑定需求哈希的本地检查点。“继续”从首个未完成阶段开始，“重跑”清除检查点并从头执行；`step + targetStage` 只执行指定阶段并保存产物。
 
 不存在 Mobile Spec 跳过、业务主题示例兜底、localhost 交付或站内假预览。
 
@@ -25,12 +25,13 @@ Runner 必须运行在具备文件系统、子进程和外网能力的独立环�
 - `POST /jobs`：提交异步任务，需要 Bearer token。
 - `GET /jobs/{projectId}`：读取 `status`、`stage`、`progress`、`message`、最近 `events`、错误或交付证据。
 - `POST /jobs/{projectId}/pause`：暂停 `queued/running` job，幂等返回 `paused`。
+- `POST /jobs/{projectId}/artifacts/{stage}`：服务端携带原始需求读取受信任步骤产物；不直接暴露给浏览器。
 
 状态中的事件只保留最近 24 条且当前为内存数据；Codex 生成、结构化结果、文件校验写入、构建修复与部署节点都有明确 message。正式 Cloud Runner 应持久化到控制面事件库。
 
 Manifest 规范化会确定性合并重复的导航 href；若合并后不足 4 个不同路由或其他结构约束不通过，Runner 会把真实校验错误反馈给 Codex，最多重新生成三次，而不是在第一次重复路由时直接终止任务。
 
-如果同一项目只在部署或公网健康检查阶段失败，Runner 会校验本地生产构建与原始需求 checkpoint，并从部署阶段继续，不重复调用 Codex 或执行生产构建。
+Runner 会分别校验 Mobile Spec、实现、构建、部署检查点；继续执行时跳过所有已成功阶段。规格步骤保存五份 Markdown 文档，实现保存 manifest，构建保存真实日志，部署保存 URL 与健康检查证据。单步执行实现、构建或部署时，前置检查点缺失会明确失败。
 
 ## 环境变量
 

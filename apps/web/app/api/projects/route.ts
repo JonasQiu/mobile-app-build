@@ -11,6 +11,7 @@ type ProjectRow = {
   executionProgress?: number;
   executionMessage?: string;
   executionEvents?: RunnerEvent[];
+  executionCheckpoints?: string[];
 };
 
 type RunnerEvent = {
@@ -31,10 +32,12 @@ type RunnerJob = {
   message?: string;
   events?: RunnerEvent[];
   evidence?: { mobileSpecPassed?: boolean; buildPassed?: boolean; deployPassed?: boolean };
+  checkpoints?: string[];
 };
 
 const MAX_ACTIVE_PROJECTS = 2;
 const ACTIVE_PROJECT_STATUSES = ["dispatching", "building"];
+const RUNNER_SYNC_STATUSES = [...ACTIVE_PROJECT_STATUSES, "ready"];
 
 function validDeliveryUrl(value: unknown) {
   if (typeof value !== "string") return false;
@@ -54,7 +57,7 @@ async function syncRunnerState(userId: string, projects: ProjectRow[]) {
   const token = process.env.CODEX_RUNNER_TOKEN;
   if (!endpoint || !token) return;
   const origin = new URL(endpoint).origin;
-  await Promise.all(projects.filter((project) => ACTIVE_PROJECT_STATUSES.includes(project.status)).map(async (project) => {
+  await Promise.all(projects.filter((project) => RUNNER_SYNC_STATUSES.includes(project.status)).map(async (project) => {
     try {
       const response = await fetch(`${origin}/jobs/${encodeURIComponent(project.id)}`, {
         headers: { authorization: `Bearer ${token}`, accept: "application/json" },
@@ -75,6 +78,9 @@ async function syncRunnerState(userId: string, projects: ProjectRow[]) {
           progress: Math.max(0, Math.min(100, Number(event.progress) || 0)),
         }))
         : [];
+      project.executionCheckpoints = Array.isArray(job.checkpoints)
+        ? job.checkpoints.filter((stage) => ["mobile-spec", "implementation", "build", "deployment"].includes(stage))
+        : [];
       if (job.status === "failed") {
         await getD1().prepare(`UPDATE projects SET status = 'failed', current_stage = 'failed',
           updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?`).bind(project.id, userId).run();
@@ -87,6 +93,14 @@ async function syncRunnerState(userId: string, projects: ProjectRow[]) {
           updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?`).bind(project.id, userId).run();
         project.status = "paused";
         project.currentStage = "paused";
+        project.previewUrl = null;
+        return;
+      }
+      if (job.status === "checkpointed" && job.stage && ["mobile-spec", "implementation", "build", "deployment"].includes(job.stage)) {
+        await getD1().prepare(`UPDATE projects SET status = 'ready', current_stage = ?, preview_url = NULL,
+          updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?`).bind(job.stage, project.id, userId).run();
+        project.status = "ready";
+        project.currentStage = job.stage;
         project.previewUrl = null;
         return;
       }

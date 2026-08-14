@@ -71,6 +71,10 @@ Runner 为每个项目创建隔离工作区，并按以下顺序执行：
 
 任一 Mobile Spec artifact 缺失、状态错误或 gate 失败时，Runner 停止后续实现，不生成交付 URL。
 
+Mobile Spec 全部通过后，Runner 写入绑定原始需求 SHA-256 的规格检查点，记录 `change` 与 `pageSpecId`。继续执行只有在 marker 和 Proposal、Spec、Design、Review、Tasks 五份文件都存在且非空时才复用；单独重跑规格会清除下游实现、构建和部署检查点。
+
+控制站的步骤产物面板通过受鉴权 Runner 接口读取这五份 `.md` 文件，并在浏览器中安全渲染 Markdown；不允许浏览器传入任意文件路径。
+
 ## 6. 状态与本地证据
 
 Workflow 状态保存在：

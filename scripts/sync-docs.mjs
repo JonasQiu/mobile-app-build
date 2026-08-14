@@ -16,14 +16,16 @@ function yes(source, pattern) {
   return pattern.test(source) ? "已实现" : "未检测到";
 }
 
-const [app, projects, projectDelete, jobs, pause, runner, generate, manifest, serverAuth] = await Promise.all([
+const [app, projects, projectDelete, jobs, pause, artifacts, runner, generate, checkpoints, manifest, serverAuth] = await Promise.all([
   text("apps/web/app/MobileBuildApp.tsx"),
   text("apps/web/app/api/projects/route.ts"),
   text("apps/web/app/api/projects/[projectId]/route.ts"),
   text("apps/web/app/api/v1/projects/[projectId]/jobs/route.ts"),
   text("apps/web/app/api/v1/projects/[projectId]/pause/route.ts"),
+  text("apps/web/app/api/v1/projects/[projectId]/artifacts/[stage]/route.ts"),
   text("packages/codegen/runner.mjs"),
   text("packages/codegen/src/generate.js"),
+  text("packages/codegen/src/checkpoints.js"),
   text("packages/codegen/src/manifest-schema.js"),
   text("apps/web/app/lib/server-auth.ts"),
 ]);
@@ -35,7 +37,10 @@ const facts = [
   ["Codex 详细事件", yes(runner, /Codex 已返回结构化实现/), "生成、文件校验、写入、构建修复与部署消息"],
   ["历史记录删除", yes(projectDelete, /export async function DELETE/), "按用户隔离，进行中任务拒绝删除"],
   ["并发执行上限", yes(jobs, /MAX_ACTIVE_PROJECTS = 2/), "服务端原子占位，每个用户最多两个进行中项目"],
-  ["暂停与重新执行", yes(app + pause + runner, /暂停执行[\s\S]*status = 'paused'[\s\S]*jobControllers/), "Runner 中断当前子进程；暂停、失败和已交付项目可从头重新执行"],
+  ["暂停与继续执行", yes(app + pause + runner, /暂停执行[\s\S]*status = 'paused'[\s\S]*jobControllers/), "Runner 中断当前子进程；继续复用成功检查点，重跑才从头执行"],
+  ["单步执行", yes(app + jobs + runner, /label: "规格"[\s\S]*targetStage[\s\S]*mode === "step"/), "规格、实现、构建、部署可单独指定"],
+  ["阶段检查点", yes(checkpoints, /inspectCheckpoints/), "成功步骤按需求哈希持久化，后续继续不重复构建"],
+  ["产物预览", yes(app + artifacts + checkpoints, /MarkdownPreview[\s\S]*readStageArtifacts/), "步骤文件可独立读取，md 产物按 Markdown 渲染"],
   ["可信状态同步", yes(projects, /executionEvents/), "控制站服务端轮询 Runner，不接受浏览器终态"],
   ["受信任派发", yes(jobs, /CODEX_RUNNER_TOKEN/), "服务端 Bearer token 派发"],
   ["Runner message 流", yes(runner, /function reportProgress\(projectId, event, jobId\)/), "progress/message/events，最近 24 条"],
@@ -45,7 +50,7 @@ const facts = [
   ["D1 persistence", yes(serverAuth, /env\.DB/), "项目、会话与历史记录持久化"],
 ];
 
-const sources = [app, projects, projectDelete, jobs, pause, runner, generate, manifest, serverAuth].join("\n");
+const sources = [app, projects, projectDelete, jobs, pause, artifacts, runner, generate, checkpoints, manifest, serverAuth].join("\n");
 const digest = createHash("sha256").update(sources).digest("hex").slice(0, 16);
 const body = `# 实现状态快照
 
@@ -63,7 +68,8 @@ ${facts.map(([name, status, detail]) => `| ${name} | ${status} | ${detail} |`).j
 
 - Runner job/message/events 当前为内存状态，不具备重启恢复。
 - Cloudflare Quick Tunnel 只用于开发与验收，不是生产 DeploymentProvider。
-- Desktop Agent、持久 checkpoint、源码 ZIP、取消与断点继续当前未实现。
+- 检查点与产物当前持久化在 Runner 本地工作区；Runner job/message/events 仍未进入共享数据库。
+- Desktop Agent、源码 ZIP、跨 Runner 迁移和进程重启后自动接管执行中任务当前未实现。
 - 浏览器无权写入 delivered 或部署 URL。
 `;
 

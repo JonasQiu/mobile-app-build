@@ -2,11 +2,19 @@
 // asynchronously and reports stage/evidence to the server-owned callback.
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
-import { readdir, readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { generate } from "./src/generate.js";
+import {
+  EXECUTION_STAGES,
+  inspectCheckpoints,
+  invalidateOutputAfter,
+  readStageArtifacts,
+  writeDeploymentEvidence,
+  writeOutputCheckpoint,
+} from "./src/checkpoints.js";
 import { startPreview } from "./src/serve.js";
 import { startQuickTunnel, waitForPublicUrl } from "./src/tunnel.js";
 
@@ -49,7 +57,8 @@ const PROGRESS = {
   done: [88, "生产构建已通过，准备部署"],
   deployment: [92, "正在发布独立站点并执行公网健康检查"],
   delivered: [100, "部署和健康检查均已通过"],
-  paused: [0, "执行已暂停，可重新执行"],
+  checkpointed: [88, "单步执行完成，检查点与产物已保存"],
+  paused: [0, "执行已暂停，可从成功检查点继续"],
   failed: [100, "执行失败，未生成交付 URL"],
 };
 
@@ -138,27 +147,6 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function hasDeploymentCheckpoint(outDir, specWorkRoot, requirement) {
-  if (!existsSync(join(outDir, ".next", "BUILD_ID")) || !existsSync(join(outDir, "node_modules", ".bin", "next"))) {
-    return false;
-  }
-  const requirementDir = join(specWorkRoot, "requirements");
-  let files;
-  try {
-    files = await readdir(requirementDir);
-  } catch {
-    return false;
-  }
-  for (const file of files.filter((name) => name.endsWith(".md"))) {
-    try {
-      if ((await readFile(join(requirementDir, file), "utf8")).trim() === requirement.trim()) return true;
-    } catch {
-      // A partial checkpoint is not safe to resume.
-    }
-  }
-  return false;
-}
-
 function send(res, status, body) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
   res.end(JSON.stringify(body));
@@ -226,36 +214,95 @@ async function deployPreview(preview, signal) {
   throw new Error("DeploymentProvider is not configured; refusing to return localhost");
 }
 
+function stopPreview(slug) {
+  const previous = previews.get(slug);
+  if (!previous) return;
+  previews.delete(slug);
+  previous.stop();
+}
+
+function nextIncompleteStage(checkpoints) {
+  return EXECUTION_STAGES.find((stage) => !checkpoints.includes(stage)) || "deployment";
+}
+
+function stageLabel(stage) {
+  return { "mobile-spec": "规格", implementation: "实现", build: "构建", deployment: "部署" }[stage] || stage;
+}
+
 async function executeJob(job, controller) {
   const { signal } = controller;
-  updateJob(job.projectId, { id: job.id, status: "running", stage: "mobile-spec", progress: 7 }, "Runner 已接收任务，开始生成 Mobile Spec");
   const slug = slugify(job.projectId);
   const outDir = join(WORK_ROOT, slug);
   const specWorkRoot = join(SPEC_WORK_ROOT, slug);
   let deployment = null;
   try {
     throwIfPaused(signal);
-    if (job.forceRerun) {
-      const previous = previews.get(slug);
-      if (previous) {
-        previews.delete(slug);
-        previous.stop();
-      }
-    }
-    const resumable = !job.forceRerun && await hasDeploymentCheckpoint(outDir, specWorkRoot, job.requirement);
-    throwIfPaused(signal);
-    let result;
-    if (resumable) {
-      result = { ok: true, outDir, attempts: 0 };
-      updateJob(job.projectId, {
-        status: "running",
-        stage: "deployment",
-        progress: 90,
-      }, "检测到同一需求已通过 Mobile Spec 和生产构建，继续部署，无需重复生成");
-    } else {
+    let checkpoints = await inspectCheckpoints({ outDir, specWorkRoot, requirement: job.requirement });
+    let startStage = null;
+    let stopAfterStage = "build";
+    let shouldDeploy = job.mode !== "step" || job.targetStage === "deployment";
+
+    if (job.mode === "rerun") {
+      stopPreview(slug);
       await rm(outDir, { recursive: true, force: true });
-      throwIfPaused(signal);
-      await callback(job.callbackUrl, { status: "building", stage: "mobile-spec" }, signal);
+      await rm(specWorkRoot, { recursive: true, force: true });
+      checkpoints = [];
+      startStage = "mobile-spec";
+      updateJob(job.projectId, { id: job.id, status: "running", stage: "mobile-spec", progress: 7, checkpoints }, "已清除旧检查点，正在从 Mobile Spec 重新执行完整流程");
+    } else if (job.mode === "step") {
+      const target = job.targetStage;
+      stopPreview(slug);
+      if (target === "mobile-spec") {
+        await rm(outDir, { recursive: true, force: true });
+        await rm(specWorkRoot, { recursive: true, force: true });
+        checkpoints = [];
+        startStage = "mobile-spec";
+        stopAfterStage = "mobile-spec";
+      } else if (target === "implementation") {
+        if (!checkpoints.includes("mobile-spec")) throw new Error("执行实现前需要成功的 Mobile Spec 检查点");
+        await rm(outDir, { recursive: true, force: true });
+        checkpoints = ["mobile-spec"];
+        startStage = "implementation";
+        stopAfterStage = "implementation";
+      } else if (target === "build") {
+        if (!checkpoints.includes("implementation")) throw new Error("执行构建前需要成功的实现检查点");
+        await rm(join(outDir, ".next"), { recursive: true, force: true });
+        await invalidateOutputAfter({ outDir, requirement: job.requirement, stage: "implementation" });
+        checkpoints = checkpoints.filter((stage) => ["mobile-spec", "implementation"].includes(stage));
+        startStage = "build";
+        stopAfterStage = "build";
+      } else if (target === "deployment") {
+        if (!checkpoints.includes("build")) throw new Error("执行部署前需要成功的生产构建检查点");
+        await invalidateOutputAfter({ outDir, requirement: job.requirement, stage: "build" });
+        checkpoints = checkpoints.filter((stage) => stage !== "deployment");
+      }
+      const progress = { "mobile-spec": 7, implementation: 58, build: 76, deployment: 90 }[target] || 7;
+      updateJob(job.projectId, { id: job.id, status: "running", stage: target, progress, checkpoints }, `Runner 已接收“${stageLabel(target)}”单步任务`);
+    } else {
+      const nextStage = nextIncompleteStage(checkpoints);
+      if (checkpoints.length) {
+        for (const stage of checkpoints.filter((item) => item !== "deployment")) {
+          updateJob(job.projectId, { id: job.id, status: "running", stage: nextStage, checkpoints }, `已复用“${stageLabel(stage)}”成功检查点，不重复执行`);
+        }
+      }
+      if (nextStage === "mobile-spec") {
+        await rm(outDir, { recursive: true, force: true });
+        await rm(specWorkRoot, { recursive: true, force: true });
+        startStage = "mobile-spec";
+      } else if (nextStage === "implementation") {
+        await rm(outDir, { recursive: true, force: true });
+        startStage = "implementation";
+      } else if (nextStage === "build") {
+        startStage = "build";
+      }
+      const progress = { "mobile-spec": 7, implementation: 58, build: 76, deployment: 90 }[nextStage] || 7;
+      updateJob(job.projectId, { id: job.id, status: "running", stage: nextStage, progress, checkpoints }, checkpoints.length ? `从“${stageLabel(nextStage)}”继续执行` : "Runner 已接收任务，开始生成 Mobile Spec");
+    }
+
+    throwIfPaused(signal);
+    let result = { ok: true, outDir, attempts: 0 };
+    if (startStage) {
+      await callback(job.callbackUrl, { status: "building", stage: startStage }, signal);
       throwIfPaused(signal);
       result = await withTimeout(generate({
         requirement: job.requirement,
@@ -264,17 +311,34 @@ async function executeJob(job, controller) {
         openaiApiKey: process.env.OPENAI_API_KEY,
         onProgress: (event) => reportProgress(job.projectId, event, job.id),
         signal,
+        startStage,
+        stopAfterStage,
       }), GENERATION_TIMEOUT_MS, "generation");
       throwIfPaused(signal);
       if (!result.ok) throw new Error(`build failed after ${result.attempts} attempts`);
+      checkpoints = await inspectCheckpoints({ outDir, specWorkRoot, requirement: job.requirement });
+    }
+
+    if (!shouldDeploy) {
+      const completedStage = job.targetStage || result.completedStage;
+      const message = `“${stageLabel(completedStage)}”单步执行完成，检查点和产物已保存`;
+      await callback(job.callbackUrl, { status: "checkpointed", stage: completedStage }, signal);
+      if (jobs.get(job.projectId)?.id !== job.id) return;
+      updateJob(job.projectId, {
+        id: job.id,
+        status: "checkpointed",
+        stage: completedStage,
+        progress: PROGRESS.checkpointed[0],
+        checkpoints,
+      }, message);
+      return;
     }
 
     throwIfPaused(signal);
     updateJob(job.projectId, { status: "running", stage: "deployment", progress: PROGRESS.deployment[0] }, PROGRESS.deployment[1]);
     await callback(job.callbackUrl, { status: "building", stage: "deployment" }, signal);
     throwIfPaused(signal);
-    const previous = previews.get(slug);
-    if (previous) previous.stop();
+    stopPreview(slug);
     const preview = await startPreview(result.outDir);
     throwIfPaused(signal);
     deployment = await deployPreview(preview, signal);
@@ -298,11 +362,15 @@ async function executeJob(job, controller) {
       signal,
     });
     throwIfPaused(signal);
+    const evidence = { mobileSpecPassed: true, buildPassed: true, deployPassed: true };
+    await writeDeploymentEvidence(outDir, { url, evidence, checkedAt: new Date().toISOString() });
+    await writeOutputCheckpoint({ outDir, requirement: job.requirement, stage: "deployment" });
+    checkpoints = await inspectCheckpoints({ outDir, specWorkRoot, requirement: job.requirement });
     await callback(job.callbackUrl, {
       status: "delivered",
       stage: "delivered",
       url,
-      evidence: { mobileSpecPassed: true, buildPassed: true, deployPassed: true },
+      evidence,
     }, signal);
     throwIfPaused(signal);
     if (jobs.get(job.projectId)?.id !== job.id) return;
@@ -312,7 +380,8 @@ async function executeJob(job, controller) {
       stage: "delivered",
       progress: 100,
       url,
-      evidence: { mobileSpecPassed: true, buildPassed: true, deployPassed: true },
+      evidence,
+      checkpoints,
     }, PROGRESS.delivered[1]);
   } catch (error) {
     if (deployment) {
@@ -353,6 +422,40 @@ const server = createServer(async (req, res) => {
       ok: Boolean(RUNNER_TOKEN && CALLBACK_TOKEN && (process.env.OPENAI_API_KEY || process.env.CODEX_BIN)),
       deploymentProviderConfigured: Boolean(process.env.CODEGEN_PUBLIC_PREVIEW_BASE_URL || process.env.CODEGEN_DEPLOYMENT_PROVIDER),
     });
+    return;
+  }
+  const artifactMatch = req.method === "POST" ? req.url?.match(/^\/jobs\/([^/?]+)\/artifacts\/(mobile-spec|implementation|build|deployment)(?:\?.*)?$/) : null;
+  if (artifactMatch) {
+    const supplied = req.headers.authorization?.replace(/^Bearer\s+/i, "") || "";
+    if (!RUNNER_TOKEN || !supplied || !timingSafeEqual(RUNNER_TOKEN, supplied)) {
+      send(res, 401, { error: "unauthorized runner request" });
+      return;
+    }
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      send(res, 400, { error: "invalid JSON body" });
+      return;
+    }
+    const projectId = decodeURIComponent(artifactMatch[1]);
+    const requirement = String(body?.requirement || "").trim();
+    if (!requirement) {
+      send(res, 400, { error: "requirement is required" });
+      return;
+    }
+    const slug = slugify(projectId);
+    try {
+      const result = await readStageArtifacts({
+        outDir: join(WORK_ROOT, slug),
+        specWorkRoot: join(SPEC_WORK_ROOT, slug),
+        requirement,
+        stage: artifactMatch[2],
+      });
+      send(res, 200, result);
+    } catch (error) {
+      send(res, 500, { error: error instanceof Error ? error.message : String(error) });
+    }
     return;
   }
   if (req.method === "GET" && req.url?.startsWith("/jobs/")) {
@@ -427,13 +530,24 @@ const server = createServer(async (req, res) => {
   const projectId = String(body?.projectId || "").trim();
   const requirement = String(body?.requirement || "").trim();
   const callbackUrl = String(body?.callbackUrl || "").trim();
+  const requestedMode = body?.forceRerun === true ? "rerun" : String(body?.mode || "continue");
+  const mode = ["continue", "rerun", "step"].includes(requestedMode) ? requestedMode : "";
+  const targetStage = typeof body?.targetStage === "string" ? body.targetStage : null;
   if (!projectId || !requirement || !callbackUrl.startsWith("https://")) {
     send(res, 400, { error: "projectId, requirement, and HTTPS callbackUrl are required" });
     return;
   }
+  if (!mode || (mode === "step" && !EXECUTION_STAGES.includes(targetStage))) {
+    send(res, 400, { error: "mode must be continue, rerun, or step with a valid targetStage" });
+    return;
+  }
   const existing = jobs.get(projectId);
-  if (existing && existing.status === "running") {
+  if (existing && ["queued", "running"].includes(existing.status)) {
     send(res, 202, { job: existing });
+    return;
+  }
+  if (mode === "continue" && existing?.status === "delivered" && existing.requirement === requirement) {
+    send(res, 200, { job: existing, reused: true });
     return;
   }
   const job = {
@@ -441,14 +555,18 @@ const server = createServer(async (req, res) => {
     projectId,
     requirement,
     callbackUrl,
-    forceRerun: body?.forceRerun === true,
+    mode,
+    targetStage,
   };
   jobs.delete(projectId);
   updateJob(projectId, {
     id: job.id,
+    requirement,
     status: "queued",
-    stage: "mobile-spec",
+    stage: mode === "step" ? targetStage : "mobile-spec",
     progress: PROGRESS.queued[0],
+    mode,
+    targetStage,
   }, PROGRESS.queued[1]);
   const controller = new AbortController();
   jobControllers.set(projectId, controller);
