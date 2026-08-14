@@ -39,7 +39,7 @@ const facts = [
   ["并发执行上限", yes(jobs, /MAX_ACTIVE_PROJECTS = 2/), "服务端原子占位，每个用户最多两个进行中项目"],
   ["暂停与继续执行", yes(app + pause + runner, /暂停执行[\s\S]*status = 'paused'[\s\S]*jobControllers/), "Runner 中断当前子进程；继续复用成功检查点，重跑才从头执行"],
   ["单步执行", yes(app + jobs + runner, /label: "规格"[\s\S]*targetStage[\s\S]*mode === "step"/), "规格、实现、构建、部署可单独指定"],
-  ["阶段检查点", yes(checkpoints, /inspectCheckpoints/), "成功步骤按需求哈希持久化，后续继续不重复构建"],
+  ["阶段检查点", yes(checkpoints, /findLegacySpecMarker/), "成功步骤按需求哈希持久化，旧产物自动迁移，后续继续不重复构建"],
   ["产物预览", yes(app + artifacts + checkpoints, /MarkdownPreview[\s\S]*readStageArtifacts/), "步骤文件可独立读取，md 产物按 Markdown 渲染"],
   ["可信状态同步", yes(projects, /executionEvents/), "控制站服务端轮询 Runner，不接受浏览器终态"],
   ["受信任派发", yes(jobs, /CODEX_RUNNER_TOKEN/), "服务端 Bearer token 派发"],

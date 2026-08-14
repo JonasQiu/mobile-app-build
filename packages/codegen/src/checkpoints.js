@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export const EXECUTION_STAGES = ["mobile-spec", "implementation", "build", "deployment"];
@@ -48,8 +48,12 @@ export async function writeSpecCheckpoint({ specWorkRoot, requirement, workflowR
 }
 
 export async function loadSpecCheckpoint({ specWorkRoot, requirement }) {
-  const marker = await readJson(join(specWorkRoot, SPEC_MARKER));
-  if (!marker || marker.requirementHash !== hashRequirement(requirement) || !marker.change || !marker.pageSpecId) return null;
+  let marker = await readJson(join(specWorkRoot, SPEC_MARKER));
+  if (!marker || marker.requirementHash !== hashRequirement(requirement) || !marker.change || !marker.pageSpecId) {
+    marker = await findLegacySpecMarker({ specWorkRoot, requirement });
+    if (!marker) return null;
+    await writeJson(join(specWorkRoot, SPEC_MARKER), marker);
+  }
   const base = join(specWorkRoot, "openspec", "changes", marker.change);
   const paths = {
     proposalMd: join(base, "proposal.md"),
@@ -63,6 +67,37 @@ export async function loadSpecCheckpoint({ specWorkRoot, requirement }) {
     const artifacts = Object.fromEntries(entries);
     if (Object.values(artifacts).some((content) => !String(content).trim())) return null;
     return { ok: true, ...artifacts, change: marker.change, pageSpecId: marker.pageSpecId, stageResults: {}, checkpointed: true };
+  } catch {
+    return null;
+  }
+}
+
+async function findLegacySpecMarker({ specWorkRoot, requirement }) {
+  try {
+    const requirementFiles = (await readdir(join(specWorkRoot, "requirements"))).filter((name) => name.endsWith(".md")).sort();
+    let change = "";
+    for (const name of requirementFiles) {
+      const saved = await readFile(join(specWorkRoot, "requirements", name), "utf8");
+      if (saved.trim() === String(requirement || "").trim()) {
+        change = name.slice(0, -3);
+        break;
+      }
+    }
+    if (!change) return null;
+    const specsRoot = join(specWorkRoot, "openspec", "changes", change, "specs");
+    const entries = await readdir(specsRoot, { withFileTypes: true });
+    const pageSpecId = entries.filter((entry) => entry.isDirectory() && existsSync(join(specsRoot, entry.name, "spec.md")))
+      .map((entry) => entry.name).sort()[0];
+    if (!pageSpecId) return null;
+    return {
+      schemaVersion: 1,
+      requirementHash: hashRequirement(requirement),
+      completedStages: ["mobile-spec"],
+      change,
+      pageSpecId,
+      migratedFromLegacy: true,
+      updatedAt: new Date().toISOString(),
+    };
   } catch {
     return null;
   }
@@ -111,8 +146,16 @@ export async function writeDeploymentEvidence(outDir, evidence) {
 
 export async function inspectCheckpoints({ outDir, specWorkRoot, requirement }) {
   const completed = [];
-  if (await loadSpecCheckpoint({ specWorkRoot, requirement })) completed.push("mobile-spec");
-  const marker = await validOutputMarker(outDir, requirement);
+  const spec = await loadSpecCheckpoint({ specWorkRoot, requirement });
+  if (spec) completed.push("mobile-spec");
+  let marker = await validOutputMarker(outDir, requirement);
+  if (!marker && spec && existsSync(join(outDir, "mobile-build-manifest.json"))) {
+    await writeOutputCheckpoint({ outDir, requirement, stage: "implementation" });
+    if (existsSync(join(outDir, ".next", "BUILD_ID")) && existsSync(join(outDir, "node_modules", ".bin", "next"))) {
+      await writeOutputCheckpoint({ outDir, requirement, stage: "build" });
+    }
+    marker = await validOutputMarker(outDir, requirement);
+  }
   if (marker?.completedStages.includes("implementation") && existsSync(join(outDir, "mobile-build-manifest.json"))) {
     completed.push("implementation");
   }

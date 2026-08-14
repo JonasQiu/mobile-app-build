@@ -113,6 +113,8 @@ Body：
 
 `mode` 可为 `continue | rerun | step`。`continue` 校验需求哈希并复用成功检查点；`rerun` 清除工作区后完整执行；`step` 必须指定 `mobile-spec | implementation | build | deployment` 之一，前置检查点不足时失败。返回 `202` 与异步 job；相同 `projectId` 正在运行时返回现有 job。已交付任务使用 `continue` 且 Runner 仍持有相同 job 时直接返回原交付，不重新构建。
 
+兼容升级前工作区：若需求文件内容一致、五份规格文档完整、manifest 存在，并且 `.next/BUILD_ID` 与 Next 可执行文件存在，Runner 会一次性写入新 marker，把现有成功结果作为 Mobile Spec、implementation、build 检查点复用。
+
 控制站只在收到 JSON 响应且 `job.id` 存在时把项目更新为 `building`。Runner 拒绝请求、返回非 JSON 或缺少任务编号时释放本次派发占位，并返回可诊断的错误码与 HTTP 状态。
 
 ### 查询任务

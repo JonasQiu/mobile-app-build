@@ -82,6 +82,7 @@ flowchart TD
 - 公网健康检查返回非 5xx。
 - 临时隧道必须完成连接注册；健康检查在总时限内重试 DNS、连接与 5xx，并在最终失败时回收预览和隧道进程。
 - 同一项目继续执行时按原始需求哈希校验 Mobile Spec、实现和构建 checkpoint，并从首个未完成阶段继续。
+- 升级前已存在且文件完整的规格、manifest 和生产构建会自动迁移为新检查点，首次继续不会重复构建。
 - 用户主动“重跑”不会复用检查点，而是清除旧工作区并从 Mobile Spec 开始新 job。
 - Runner 返回 `mobileSpecPassed`、`buildPassed`、`deployPassed` 三项证据。
 

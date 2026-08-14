@@ -67,3 +67,37 @@ test("successful stages create requirement-scoped checkpoints and viewable artif
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("legacy successful workspaces are migrated without rebuilding", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mobile-build-legacy-checkpoints-"));
+  const outDir = join(root, "out");
+  const specWorkRoot = join(root, "spec");
+  const requirement = "升级前已经完成的项目";
+  const change = "legacy-site";
+  const pageSpecId = "home";
+  try {
+    const base = join(specWorkRoot, "openspec", "changes", change);
+    await mkdir(join(base, "specs", pageSpecId), { recursive: true });
+    await mkdir(join(specWorkRoot, "requirements"), { recursive: true });
+    await writeFile(join(specWorkRoot, "requirements", `${change}.md`), `${requirement}\n`);
+    await Promise.all([
+      writeFile(join(base, "proposal.md"), "# Proposal"),
+      writeFile(join(base, "specs", pageSpecId, "spec.md"), "# Spec"),
+      writeFile(join(base, "design.md"), "# Design"),
+      writeFile(join(base, "review.md"), "# Review"),
+      writeFile(join(base, "tasks.md"), "# Tasks"),
+    ]);
+    await mkdir(join(outDir, ".next"), { recursive: true });
+    await mkdir(join(outDir, "node_modules", ".bin"), { recursive: true });
+    await writeFile(join(outDir, "mobile-build-manifest.json"), "{\"files\":[]}");
+    await writeFile(join(outDir, ".next", "BUILD_ID"), "legacy-build");
+    await writeFile(join(outDir, "node_modules", ".bin", "next"), "#!/bin/sh\n");
+
+    assert.deepEqual(await inspectCheckpoints({ outDir, specWorkRoot, requirement }), ["mobile-spec", "implementation", "build"]);
+    const artifacts = await readStageArtifacts({ outDir, specWorkRoot, requirement, stage: "mobile-spec" });
+    assert.equal(artifacts.checkpointed, true);
+    assert.equal(artifacts.artifacts[1].content, "# Spec");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

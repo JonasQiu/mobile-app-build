@@ -28,7 +28,7 @@ Mobile Web（OpenAI Sites + D1）
 - Runner 百分比、当前 message 与最近消息流，每 15 秒由服务端可信同步。
 - 输入框上方提供“继续、重跑、规格、实现、构建、部署”快捷按钮；单步执行只运行指定阶段。
 - 真实暂停会向 Runner 发送中断信号并终止当前 Codex、Mobile Spec、安装、构建或健康检查子进程。
-- 成功步骤写入需求哈希检查点；“继续”从首个未完成步骤开始，“重跑”清除旧检查点并完整执行。
+- 成功步骤写入需求哈希检查点；“继续”从首个未完成步骤开始，“重跑”清除旧检查点并完整执行。升级前已有的完整规格、manifest 和生产构建会在首次读取时自动迁移为检查点。
 - Mobile Spec 的 Proposal、Spec、Design、Review、Tasks 以 Markdown 预览；实现清单、构建日志和部署证据也按步骤查看。
 - Mobile Spec 是硬门禁；缺少 artifacts 或 gate 失败时停止。
 - `npm ci`、`next build`、构建失败反馈修复和外部 HTTPS 健康检查。
