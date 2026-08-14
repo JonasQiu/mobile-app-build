@@ -17,7 +17,7 @@ Mobile Spec 的 current、checks、events、source、verify 等过程状态统�
 ## 常用 Stage Skill
 
 ```text
-mobile-spec-proposal <望岳链接|Cooper文档链接> [change-id]  # 读取 PRD，生成 proposal.md + specs/**/*.md
+mobile-spec-proposal <需求文本|HTTP(S)链接> [change-id]  # 读取需求，生成 proposal.md + specs/**/*.md
 mobile-spec-design <change-id>    # 生成 design.md + review.md
 mobile-spec-task <change-id>      # 生成 tasks.md
 mobile-spec-coding <change-id>    # 实现任务并勾选 tasks

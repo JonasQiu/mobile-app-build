@@ -28,8 +28,6 @@ const {
   PLATFORM_TO_SCHEMA,
 } = require('../schema/register');
 const { installAgents, ALLOWED_PLATFORMS, ALLOWED_TOOLS } = require('../install/agents');
-const { installHooks } = require('../install/hooks');
-const { installMonitor } = require('../install/monitor');
 const { migrateLegacyWorkflowState } = require('../workflow/storage');
 
 const README_TEMPLATE = path.resolve(__dirname, '..', '..', 'schemas', 'openspec-readme.md');
@@ -276,11 +274,8 @@ function cleanProjectSchemaDirs(targetPath) {
   return removed;
 }
 
-/**
- * 末尾输出 d-skills 提示，引导用户安装外部 skill（cooper / mastergo mcp 等）。
- */
-function printDSkillsHint() {
-  console.log('💡 cooper / mastergo mcp 等外部 skill 请用 d-skills 安装。');
+function printExtensionHint() {
+  console.log('💡 外部需求源、设计源和验证工具可通过标准 URL 或自定义 Adapter 接入。');
 }
 
 /**
@@ -347,19 +342,6 @@ async function cmdInit(args, _opts = {}) {
   if (codexSkills.length > 0) {
     console.log(formatItems('codex   ', '.codex/skills/', codexSkills));
   }
-  // 2b. 安装 SDD 观察兜底 hook（机制强制，补全主动埋点漏埋）
-  const hookResult = installHooks(targetPath, { tools });
-  if (!hookResult.skipped) {
-    const targets = [
-      tools.includes('claude') ? '.claude/settings.json' : null,
-      tools.includes('codex') ? '.codex/hooks.json' : null,
-    ].filter(Boolean);
-    console.log(`  ✓ observe   → ${targets.join(' + ')}`);
-    if (tools.includes('codex')) {
-      console.log(`                Codex observe hook 已安装（首次使用请通过 /hooks 审核信任）`);
-    }
-  }
-
   // 3. 写 openspec/config.yaml
   writeConfig(targetPath, platform);
   console.log(`  ✓ config    → openspec/config.yaml`);
@@ -376,13 +358,8 @@ async function cmdInit(args, _opts = {}) {
     console.log(`\n⚠️  ${migration.conflicts.length} 个旧 workflow 文件与用户目录状态冲突，已保留原文件`);
   }
 
-  // 6. 安装公司 eval 监控插件(MOBILE_SPEC_SKIP_EVAL=1 跳过;失败降级不阻断)
-  if (process.env.MOBILE_SPEC_SKIP_EVAL !== '1') {
-    installMonitor([]);
-  }
-
   console.log('\n初始化完成，重启 IDE 后 Mobile Spec skills 生效。');
-  printDSkillsHint();
+  printExtensionHint();
 }
 
 module.exports = {
@@ -390,7 +367,7 @@ module.exports = {
   writeConfig,
   parseInitArgs,
   buildConfigContent,
-  printDSkillsHint,
+  printExtensionHint,
   promptPlatform,
   promptTools,
   confirmOverwriteAll,

@@ -2,11 +2,4 @@ extends: ./base.yaml
 name: h5-tools
 description: H5 项目专属清单
 skills:
-  - open-h5-in-mobile-app
-  - debug-mobile-web
-  - mobile-spec-sync-context
   - add-font
-  - h5-overlay-mask
-  - immersive-navigation
-  - opsx-h5-distill-context
-  - opsx-h5-tracking

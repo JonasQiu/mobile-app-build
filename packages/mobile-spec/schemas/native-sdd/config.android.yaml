@@ -9,4 +9,4 @@ rules:
     - 开发前必须按 design.md 的上下文读取清单复核主工程 AGENTS、模块 AGENTS、docs/biz/features、architecture、glossary 等相关文件。
     - 只修改 design.md 已确认的 Android 模块和文件；涉及跨模块、公共基建或壳工程改动时，先回写 design.md 并确认范围。
   postArchive:
-    - 归档后运行 Skill `opsx-sync-context-native` 触发上下文同步，将变更设计信息同步回 docs/* 对应文件。
+    - 归档后运行 Skill `mobile-spec-sync-context`，将稳定设计信息同步回 docs/* 对应文件。

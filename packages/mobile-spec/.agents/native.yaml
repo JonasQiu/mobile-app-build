@@ -1,8 +1,4 @@
 extends: ./base.yaml
 name: native-tools
 description: Native （iOS / Android / Harmony） 项目专属清单
-skills:
-  - mobile-spec-ios-sync-context
-  - opsx-sync-context-native
-  - opsx-android-context-doc
-  - opsx-ios-context-doc
+skills: []

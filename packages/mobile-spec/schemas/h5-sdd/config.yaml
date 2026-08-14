@@ -3,13 +3,11 @@ schema: h5-sdd
 context: |
   【项目规则】
   - 所有文档及回答使用中文
-  - 角色定位：司机端前端研发
+  - 角色定位：Web 前端研发
 
   【上下文路由】
   生成 artifact 前，根据 `docs/index.md` 中的路由表，按本次变更范围**按需读取** docs/* 对应文件获取完整上下文。
 
 rules:
-  preNew:
-    - 首次接入或 docs/* 缺失时，先调用 opsx-h5-distill-context 初始化 H5 上下文。
   postArchive:
     - 归档后运行 Skill `mobile-spec-sync-context`，将本次变更的接口、路由、术语、埋点等设计信息同步回 docs/* 对应文件。

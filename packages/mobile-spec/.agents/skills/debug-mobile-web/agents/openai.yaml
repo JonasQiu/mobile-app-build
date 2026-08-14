@@ -1,4 +1,0 @@
-interface:
-  display_name: "调试移动端 Web 页面"
-  short_description: "使用 WebLens 检查移动端 Web 的 DOM、Console 和 Network"
-  default_prompt: "使用 $debug-mobile-web 调试当前移动端 Web 页面，检查 DOM、Console 和 Network 并给出证据。"

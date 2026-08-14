@@ -15,7 +15,7 @@ license: MIT
 
 ## 执行约束
 
-每次 hook 检查顶层 `ok`；false 时停止。监控项 `deterministic.monitor` 不表示中心已接收或判定通过，失败只报告 warning，不覆盖业务 gate，也不由 Mobile Spec 重试。
+每次 hook 检查顶层 `ok`；false 时停止。监控项 `deterministic.monitor` 只表示本地事件记录结果，失败只报告 warning，不覆盖业务 gate，也不由 Mobile Spec 重试。
 
 ## 流程
 

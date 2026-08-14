@@ -12,7 +12,7 @@
  *   1. 解析参数：--pm（显式指定包管理器）/ --dry-run（只打印不执行）/ -f --force（跳过版本比较）
  *   2. 决定包管理器：显式 --pm 优先；否则 detectPackageManager() 自动检测
  *   3. 取当前版本：从运行中 CLI 同级 package.json 读取
- *   4. 查最新版本：npm view @mobile-app-build/mobile-spec version（npm 随 node 安装、总是可用；自动读 ~/.npmrc 命中内网源）
+ *   4. 从公共 npm registry 查询最新版本
  *      - current >= latest → 打印「已是最新」并返回
  *      - --force → 跳过版本比较直接安装
  *   5. 执行安装：按 pm 映射的全局安装命令（execFileSync，stdio inherit）
@@ -63,8 +63,7 @@ function parseUpgradeArgs(args) {
  * 自动检测包管理器。两级信号，优先级递减：
  *
  *   1. 运行脚本路径（process.argv[1]，即当前 mobile-spec.js 绝对路径）—— 最权威
- *      - 含 'pnpm/global' 或 '/.pnpm/@didi+mobile-spec@' → pnpm
- *        （pnpm 全局：~/Library/pnpm/global/5/.pnpm/@didi+mobile-spec@<ver>_.../node_modules/@mobile-app-build/mobile-spec/bin/mobile-spec.js）
+ *      - 含 'pnpm/global' 或 '/.pnpm/@mobile-app-build+mobile-spec@' → pnpm
  *      - 含 'lib/node_modules/@mobile-app-build/mobile-spec'（无 pnpm 标记）→ npm
  *      - 含 'yarn' 或 'Yarn' → yarn
  *   2. npm_config_user_agent 环境变量（回退）—— 形如 pnpm/9.x / npm/10.x / yarn/1.x
@@ -80,7 +79,7 @@ function detectPackageManager(scriptPath, env) {
 
   // 1. 运行脚本路径（最权威：反映 CLI 实际由哪个 pm 安装）
   const norm = sp.replace(/\\/g, '/');
-  if (norm.includes('pnpm/global') || norm.includes('/.pnpm/@didi+mobile-spec@')) {
+  if (norm.includes('pnpm/global') || norm.includes('/.pnpm/@mobile-app-build+mobile-spec@')) {
     return 'pnpm';
   }
   if (norm.includes('yarn') || norm.includes('Yarn')) {
@@ -181,13 +180,13 @@ function installLatestVersion(pm, runInstall) {
 }
 
 /**
- * 查询 npm registry 上的最新版本（npm 随 node 安装、总是可用；自动读 ~/.npmrc 命中内网源）。
+ * 查询公共 npm registry 上的最新版本。
  * 返回 stdout 首行 trim 即版本号；失败抛错。
  *
  * @returns {string}  最新版本号
  */
 function queryLatestVersion() {
-  const out = execFileSync('npm', ['view', '@mobile-app-build/mobile-spec', 'version'], {
+  const out = execFileSync('npm', ['view', '@mobile-app-build/mobile-spec', 'version', '--registry=https://registry.npmjs.org'], {
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf8',
   });

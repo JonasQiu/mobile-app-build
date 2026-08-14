@@ -19,7 +19,7 @@ license: MIT
 - checkbox 只表示 apply 实现；兼容已有 `tasks.md` 时仍执行其中全部 checkbox，不把遗留任务留给 Verify。代码审查、开发服务启动和 lint 以 `tasks.md` 的“Coding 收口”表为执行输入，不要求生成 checkbox。
 - 代码审查发现确定性问题时，按证据自行修复；不确定性问题不得猜测，须向用户说明问题、已知与未知、待确认决策，并给出建议方案及其影响或备选，确认前停止相关修改。
 - `deterministic.rules` 只做配置检查；仅执行明确点名的已安装 skill、command 或 script。
-- 每次 hook 检查顶层 `ok`；false 时停止。监控项 `deterministic.monitor` 不表示中心已接收或判定通过，失败只报告 warning，不覆盖业务 gate，也不由 Mobile Spec 重试。
+- 每次 hook 检查顶层 `ok`；false 时停止。监控项 `deterministic.monitor` 只表示本地事件记录结果，失败只报告 warning，不覆盖业务 gate，也不由 Mobile Spec 重试。
 
 ## 流程
 

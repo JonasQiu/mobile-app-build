@@ -37,7 +37,6 @@ export function mobileSpecEnv(specWorkspace) {
     ...process.env,
     MOBILE_SPEC_HOME_OVERRIDE: join(specWorkspace, ".mobilespec"),
     MOBILE_SPEC_WORKFLOW_SKIP_MONITOR: "1",
-    MOBILE_SPEC_SKIP_EVAL: "1",
   };
 }
 

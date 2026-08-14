@@ -18,7 +18,7 @@ license: MIT
 - coordinator 处理 findings；每轮创建全新隔离 subagent，不得降级代验或补做 `tasks.md` 未完成任务。
 - proposal/specs/design/review/tasks 与代码是基线，不得扩大需求或改写方案。subagent 不得修改产品代码、配置或 Mobile Spec artifacts，只写验证产物并报告 `changedProductFiles: []`；coordinator 仅可按 finding 处理协议修复确定性产品问题。
 - 每次用户调用都是新的独立复验，由 `preStage` 创建 invocation；内部复验沿用当前 invocation，不得重跑入口。已归档 change 使用 `archived-audit` 模式，能力不变，证据只写 audit sidecar，不得更新 current、phase、历史 node/check 或 Archive 状态。
-- `deterministic.rules` 只检查配置；仅执行明确点名的已安装 capability。hook 顶层 `ok: false` 时停止；`deterministic.monitor` 不表示中心已接收或判定通过，失败只报 warning，不覆盖 gate，也不由 Mobile Spec 重试。
+- `deterministic.rules` 只检查配置；仅执行明确点名的已安装 capability。hook 顶层 `ok: false` 时停止；`deterministic.monitor` 只表示本地事件记录结果，失败只报 warning，不覆盖 gate，也不由 Mobile Spec 重试。
 
 ## 流程
 

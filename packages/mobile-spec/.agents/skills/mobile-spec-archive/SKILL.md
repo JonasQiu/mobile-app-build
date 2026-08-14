@@ -14,7 +14,7 @@ license: MIT
 
 ## 执行约束
 
-- 每次 hook 检查顶层 `ok`；false 时停止。监控项 `deterministic.monitor` 不表示中心已接收或判定通过，失败只报告 warning，不覆盖业务 gate，也不由 Mobile Spec 重试。
+- 每次 hook 检查顶层 `ok`；false 时停止。监控项 `deterministic.monitor` 只表示本地事件记录结果，失败只报告 warning，不覆盖业务 gate，也不由 Mobile Spec 重试。
 - `deterministic.rules` 只做配置检查；仅执行明确点名的已安装 skill、command 或 script。
 - archive 不可原地撤销。执行前解析唯一源目录和目标目录，确认目标不存在，不覆盖已有归档。
 

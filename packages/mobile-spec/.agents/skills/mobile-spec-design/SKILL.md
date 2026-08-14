@@ -29,7 +29,7 @@ license: MIT
 - 设计稿只决定样式；静态内容以 PRD / 用户或 PM 明确确认为准，动态内容以真实接口返回 / 联调数据为准。设计稿示例与这些来源不一致、缺省或不完整时，Agent 按此优先级直接处理，不询问用户，也不记为风险。
 - 只有权威内容来源本身缺失或互相冲突、且会影响方案定案时，才记录来源、影响和 Owner；不得静默改写需求。
 - 任一 hook 返回非空 `agentActions` 时，读取 [references/agent-actions.md](references/agent-actions.md) 并按协议处理；为空时不读取。
-- hook 顶层 `ok: false` 时停止；`deterministic.monitor` 不表示中心已接收或判定通过，失败只报 warning，不覆盖 gate，也不由 Mobile Spec 重试。
+- hook 顶层 `ok: false` 时停止；`deterministic.monitor` 只表示本地事件记录结果，失败只报 warning，不覆盖 gate，也不由 Mobile Spec 重试。
 
 ## 流程
 

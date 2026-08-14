@@ -877,19 +877,7 @@ function parseRequirementSources(args, options = {}) {
     if (!/^https?:\/\/\S+$/i.test(raw)) {
       return { ok: false, message: `mobile-spec-proposal source must be an http(s) link: ${raw}` };
     }
-    const lower = raw.toLowerCase();
-    const wangyueId = extractWangyueIdFromSource(raw);
-    const isCooper = lower.includes('cooper.');
-    const isWangyue = Boolean(wangyueId) || lower.includes('wangyue') || lower.includes('ddp');
-    if (isWangyue && !wangyueId) {
-      return { ok: false, message: `cannot parse Wangyue ID from source link: ${raw}` };
-    }
-    links.push({
-      type: isCooper ? 'cooper' : isWangyue ? 'wangyue' : 'web',
-      url: raw,
-      ...(isCooper ? { cooperUrl: raw } : {}),
-      ...(wangyueId ? { wangyueId, requirementId: requirementIdFromWangyueId(wangyueId) } : {}),
-    });
+    links.push({ type: 'url', url: raw });
   }
 
   if (!textParts.length && !links.length) {
@@ -899,7 +887,6 @@ function parseRequirementSources(args, options = {}) {
     };
   }
 
-  const firstRequirementLink = links.find((link) => link.requirementId);
   const type = textParts.length && links.length ? 'composite' : textParts.length ? 'text' : 'link';
   return {
     ok: true,
@@ -909,26 +896,8 @@ function parseRequirementSources(args, options = {}) {
       textFile,
       links,
       url: links[0] ? links[0].url : null,
-      cooperUrl: (links.find((link) => link.cooperUrl) || {}).cooperUrl || null,
-      wangyueId: firstRequirementLink ? firstRequirementLink.wangyueId : null,
-      requirementId: firstRequirementLink ? firstRequirementLink.requirementId : null,
     },
   };
-}
-
-function extractWangyueIdFromSource(source) {
-  const raw = String(source || '');
-  const sequence = raw.match(/(?:^|[^a-z0-9])(?:r-)?(wyc-\d+)(?:[^a-z0-9]|$)/i);
-  if (sequence) return sequence[1].toLowerCase();
-
-  const query = raw.match(/[?&](?:requirementId|demandId|resourceId|sequence|id)=(?:R-)?(?:WYC-)?(\d{4,})\b/i);
-  if (query) return `wyc-${query[1]}`;
-
-  return null;
-}
-
-function requirementIdFromWangyueId(wangyueId) {
-  return `R-${String(wangyueId).toUpperCase()}`;
 }
 
 function findArtifact(ctx, id) {
@@ -2299,11 +2268,10 @@ function runMonitor(ctx, args) {
   });
   const stdout = (result.stdout || '').trim();
   const stderr = (result.stderr || '').trim();
-  const emitFailed = /(?:^|\n)EVAL_EMIT_FAILED\b/.test(stdout);
-  const emitSucceeded = /(?:^|\n)EVAL_EMIT_COMMAND_SUCCEEDED\b/.test(stdout);
+  const recorded = /(?:^|\n)EVENT_RECORDED\b/.test(stdout);
   return {
     ok: result.status === 0,
-    emitOk: emitFailed ? false : (emitSucceeded ? true : null),
+    recorded,
     status: result.status,
     args,
     stdout,
@@ -2386,8 +2354,7 @@ function readRequirementSource(ctx, change) {
 }
 
 function monitorRequirement(ctx, change) {
-  const source = readRequirementSource(ctx, change);
-  return (source && source.requirementId) || change;
+  return change;
 }
 
 function ensureChangeSidecar(ctx, change) {

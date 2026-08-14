@@ -8,7 +8,30 @@
 - 当前用服务端轮询同步；未来 SSE/WebSocket 仍复用相同 job 字段。
 - 错误文本可展示，但不得包含 Secret、完整系统路径或未经裁剪的模型输入。
 
-## 2. 控制站 API（当前实现）
+## 2. 服务连接
+
+控制面与执行面分离，服务之间全部通过 HTTPS + 凭证连接，无长连接：
+
+```mermaid
+flowchart LR
+  B[Browser] -->|"Cookie Session"| W[Web Worker 控制面]
+  W -->|"D1 binding (env.DB)"| D[(Cloudflare D1)]
+  W -->|"Bearer CODEX_RUNNER_TOKEN"| R[Node Runner]
+  R -->|"Bearer RUNNER_CALLBACK_TOKEN"| W
+  R --> C[Codex CLI / OpenAI API]
+  R --> P[DeploymentProvider]
+```
+
+| 连接 | 方式 | 说明 |
+|---|---|---|
+| 浏览器 → 控制面 | HttpOnly Cookie | 15 秒轮询 `GET /api/projects` 获取进度 |
+| 控制面 → D1 | Worker binding | `env.DB` 直连，不走网络 |
+| 控制面 → Runner | `CODEX_RUNNER_URL` + `CODEX_RUNNER_TOKEN` | 派发 `POST /jobs`、拉取 `GET /jobs/{projectId}` |
+| Runner → 控制面 | `RUNNER_CALLBACK_TOKEN` | 交付结果回调 `/api/v1/projects/{id}/delivery` |
+
+三个环境变量（`CODEX_RUNNER_URL` / `CODEX_RUNNER_TOKEN` / `RUNNER_CALLBACK_TOKEN`）任一缺失时派发路由直接返回 `503 EXECUTOR_OFFLINE`，不会伪造任务。Runner token 永不下发给浏览器。
+
+## 3. 控制站 API（当前实现）
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
@@ -48,7 +71,7 @@
 
 `DELETE /api/projects/{projectId}` 只删除当前用户拥有的记录；`dispatching/building` 项目返回 409，避免 Runner 继续执行但控制面记录消失。
 
-## 3. Runner API（当前实现）
+## 4. Runner API（当前实现）
 
 ### 健康检查
 
@@ -121,7 +144,7 @@ Body：
 
 失败包含 `status: "failed"`、`stage: "failed"` 和裁剪后的 `error`。
 
-## 4. 进度与 message 映射
+## 5. 进度与 message 映射
 
 | 内部事件 | 对外阶段 | 进度 | message 含义 |
 |---|---|---:|---|
@@ -141,7 +164,62 @@ Body：
 
 进度代表阶段性里程碑，不是模型 token 或墙钟时间的线性百分比。
 
-## 5. 未来协议
+## 6. 数据模型与处理
+
+### 存储分工
+
+| 存储位置 | 数据内容 | 角色 |
+|---|---|---|
+| Cloudflare D1 | users / sessions / projects 表 | 项目**终态**来源（source of truth） |
+| Runner 内存 | job / progress / message / events / evidence | **执行中**状态来源，重启即丢失 |
+
+Schema 双份维护：Drizzle 定义在 `apps/web/db/schema.ts`（迁移文件在 `drizzle/`），运行时幂等建表在 `apps/web/app/lib/server-auth.ts` 的 `ensureDatabase()`，两处需人工保持一致。
+
+### 表结构
+
+**users**：`id`（`usr_` 前缀）、`username` / `username_normalized`（小写归一化，唯一索引，登录键）、`password_hash` / `password_salt` / `password_iterations`（PBKDF2-SHA256，100k 迭代）、`status`（登录时校验 `active`）。
+
+**sessions**：`id`（`ses_` + UUID）、`token_hash`（会话 token 的 SHA-256，**明文不入库**，唯一索引）、`user_id`、`expires_at`（7 天）、`last_seen_at`、`revoked_at`。
+
+**projects**：`id`（`prj_` + UUID）、`owner_user_id`（所有查询带此条件做行级隔离）、`name`（≤100 字符）、`prompt`（≤4000 字符）、`status`、`current_stage`、`preview_url`（仅 delivered 时写入）、`created_at` / `updated_at`（索引 `(owner_user_id, updated_at DESC)`）。
+
+### 核心数据流
+
+1. **提交**：校验会话与输入长度 → 容量检查（每用户 < 2 个进行中）→ INSERT `queued` 记录，不触发执行。
+2. **派发**：原子抢占名额（单条条件 UPDATE，靠 `meta.changes` 判断成败）置 `dispatching` → 带 `Idempotency-Key` POST 给 Runner → 返回 202 置 `building`；派发失败回滚原状态；响应未知则保持 `dispatching` 占位交给轮询收敛。
+3. **同步**：`GET /api/projects` 对执行中项目并发拉取 Runner，按返回状态更新 D1（见下表）；progress / message / events 只透传不落库（message 截断 600 字符、events 取末 12 条）；Runner 读失败静默忽略，**绝不发明终态**；`dispatching` 超 2 分钟未确认批量置 failed 释放名额。
+4. **回调**：Runner 带 token 回调 delivery 路由，timing-safe 比对通过且校验齐全才写终态，与轮询互为冗余的两条终态通道。
+
+### 状态机
+
+```mermaid
+stateDiagram-v2
+  [*] --> queued: POST /api/projects
+  queued --> dispatching: 原子抢占名额
+  dispatching --> building: Runner 接受任务 (202)
+  dispatching --> queued: 派发失败回滚
+  dispatching --> failed: 2 分钟未确认 / Runner 报 failed
+  building --> building: 轮询更新 current_stage
+  building --> delivered: evidence 齐全 + URL 校验通过
+  building --> failed: 任一阶段失败 / evidence 缺失
+  failed --> dispatching: 用户重新派发
+```
+
+不变量：只有 Runner 回调（带 token）或控制面轮询到可信 Runner 终态两条路能写终态；浏览器侧 `PATCH /api/projects` 始终 403；delivered 必须同时具备 `mobileSpecPassed` / `buildPassed` / `deployPassed` 三项 evidence 且 URL 通过校验，任一缺失按 failed 处理。
+
+### 数据校验汇总
+
+| 数据 | 校验规则 |
+|---|---|
+| 登录口令 | PBKDF2 100k 迭代 + timing-safe 比对 |
+| 会话 token | 只存 SHA-256 哈希；查询时校验未吊销、未过期、用户 active |
+| 项目输入 | name ≤ 100 / prompt ≤ 4000，空值拒绝 |
+| 执行容量 | 每用户最多 2 个进行中项目，提交与派发两处检查 |
+| Runner 消息 | message ≤ 600、events ≤ 12 条、stage ≤ 40、progress 夹在 0-100 |
+| 交付 URL | 必须 HTTPS、非 localhost、非控制站自身、非 `/preview` 路径 |
+| 回调身份 | `RUNNER_CALLBACK_TOKEN` timing-safe 比对 |
+
+## 7. 未来协议
 
 生产化后应增加 `jobId` 资源、attempt、cursor-based event stream、cancel、lease、checkpoint、artifact 和 deployment 资源。事件至少应包含 `sequence`、`occurredAt`、`attemptId`、`type`、`payload`，支持断线重放和幂等落库。
 

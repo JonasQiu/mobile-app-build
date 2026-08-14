@@ -280,7 +280,7 @@ function cleanLegacyOpenSpecAgents(targetPath) {
       removed.push(path.relative(targetPath, dir));
     }
   }
-  for (const commandGroup of ['openspec', 'opsx']) {
+  for (const commandGroup of ['openspec']) {
     const dir = path.join(targetPath, '.claude', 'commands', commandGroup);
     if (!fs.existsSync(dir)) continue;
     fs.rmSync(dir, { recursive: true, force: true });

@@ -7,7 +7,6 @@
  *   mobile-spec update [path] [-p|--platform <h5|ios|android|harmony>]
  *   mobile-spec upgrade [--pm <pnpm|npm|yarn>] [--dry-run] [-f|--force]
  *   mobile-spec clean
- *   mobile-spec obs list|show [options]   查看 SDD 可观测数据（合并 observe + monitor）
  *   mobile-spec workflow <command>        Mobile Spec SDD 分阶段工作流确定性能力层
  *   mobile-spec --help
  *   mobile-spec -v | --version
@@ -46,16 +45,6 @@ Commands:
 
   clean                           清理 mobile-spec 用户级 schema 真实目录
 
-  obs <list|show> [options]       本地查看 SDD 可观测数据（合并 observe 被动层 + monitor 主动层）
-                                  list                      列出所有接入过的项目（路径/事件数/最后更新）
-                                  show [项目]               单个项目汇总视图（phase/产物 validate/docs 使用/review 门禁）
-                                                            不带参数时交互式选择项目
-                                  --json                    输出结构化 JSON（list / show 通用）
-
-  install-monitor [--skip-eval]   安装公司 eval 监控插件（wyc-ai-coding-insight）+
-                                  eval-emit wrapper，SDD 事件上报到公司 skillshub 平台
-                                  （init/update 默认已调用此步）
-
 Examples:
   mobile-spec init
   mobile-spec init ./my-project -p ios
@@ -91,17 +80,11 @@ switch (command) {
   case 'clean':
     require('../scripts/commands/clean').cmdClean(rest);
     break;
-  case 'obs':
-    run(require('../scripts/commands/obs').cmdObs(rest));
-    break;
   case 'workflow':
     run(require('../scripts/commands/workflow').cmdWorkflow(rest));
     break;
   case 'monitor':
     require('../scripts/monitor').monitor(rest);
-    break;
-  case 'install-monitor':
-    require('../scripts/install/monitor').installMonitor(rest);
     break;
   case '-v':
   case '--version':

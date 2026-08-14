@@ -15,9 +15,7 @@ license: MIT
 | 文档 / 材料 | 读取要求 | 作用 | 读取规则 |
 |---|---|---|---|
 | 用户直接输入 / 需求文件 | 提供时必读 | 定义本次诉求、范围与验收事实 | 作为有效需求来源；按 [text-source.md](references/text-source.md) 处理 |
-| 望岳需求 | 以望岳链接为来源时必读 | 定位需求及其权威 PRD | 只读取望岳 ID、负责人和需求 Cooper 链接；按 [wangyue-source.md](references/wangyue-source.md) 处理 |
-| Cooper PRD | 获得 Cooper PRD 链接时必读 | 提供 Proposal / Specs 的需求事实 | 只读取需求相关的背景、目标、范围、行为和验收；按 [cooper-source.md](references/cooper-source.md) 处理 |
-| 其他网页链接 | 提供且与需求相关时必读 | 补充公开产品或内容事实 | 只读取与本 change 相关内容；失败时保留链接和原因，不覆盖有效文本来源 |
+| HTTP(S) 链接 | 提供且与需求相关时必读 | 补充公开产品、文档或内容事实 | 按 [url-source.md](references/url-source.md) 处理；失败时保留链接和原因，不覆盖有效文本来源 |
 | 用户 / PM 明确确认 | 提供时必读 | 补充需求事实 | 只采信明确确认，不推断 |
 | 现状代码 | 满足读取条件时必读 | 佐证存量行为与兼容现状 | 仅涉及存量行为、问题修复、兼容边界或 PRD 无法说明现状时最小读取；不反推需求 |
 | 后端技术方案 | 提供时必登记、禁读 | Design 后端输入 | 只登记链接 / 标识与类型；不打开或读取链接内容 |
@@ -30,7 +28,7 @@ license: MIT
 - Proposal 仅在为什么做、做什么、不做什么明确且每条未决问题均已处置时 `ready`。存在 `待确认` 时必须 `blocked`；RD 确认后续补充并记录安排和依据，也视为已处置。
 - `deterministic.rules` 只做约束检查；只有规则明确点名已安装 skill、command 或 script 时才执行。
 - 任一 hook 返回非空 `agentActions` 时，读取 [references/agent-actions.md](references/agent-actions.md) 并按协议处理；为空时不读取。
-- hook 顶层 `ok: false` 时停止；`deterministic.monitor` 不表示中心已接收或判定通过，失败只报 warning，不覆盖 gate，也不由 Mobile Spec 重试。
+- hook 顶层 `ok: false` 时停止；`deterministic.monitor` 只表示本地事件记录结果，不覆盖业务 gate。
 
 ## 流程
 
@@ -43,7 +41,7 @@ license: MIT
    - workflow ready 但 artifacts 已 done 时，补开 `preStage`，用实际路径重放 `postNode` / `postStage`，再调用 next。
    - stale/rejected 从第一个受影响 artifact 继续，保留其他非空 artifact。
 3. 需要生成或修订时解析来源：
-   - 新建必须至少有非空文本 / 项目内需求文件，或一个可读取的需求链接；无需强制提供内网链接。
+   - 新建必须至少有非空文本 / 项目内需求文件，或一个可读取的 HTTP(S) 需求链接。
    - 直接文本与链接同时存在时全部登记并读取。文本定义用户当前诉求，链接补充权威细节；事实冲突且影响范围或验收时写入未决问题并停止 ready，不静默取舍。
    - 继续时按“本次显式输入 → `storage.requirementSourceFile` → 已有 proposal 来源”复用。
    - 无法获得可读取来源或核心 PRD 事实会改变范围/验收时停止，不猜测、不创建 artifact。
@@ -58,7 +56,7 @@ license: MIT
 5. 执行 `preStage --stage proposal`；通过后执行 `mobile-spec workflow plan --stage proposal --change <change> --json`，核对 artifacts、依赖、路径和 gate。
 6. 执行 `openspec instructions proposal --change <change>` 并写 `proposal.md`：
    - 模板的目标、权威输入、内容边界、提示和自检只能保留为 HTML comment 或在生成时省略，不得变成可见正文。
-   - 输入材料登记直接文本 / 需求文件、所有原始链接或标识、类型和后续用途；仅在已提供时填写望岳 ID、PM 和 Owner，未提供不能作为阻断原因。
+   - 输入材料登记直接文本 / 需求文件、所有原始链接、类型和后续用途；未提供的来源元数据不能作为阻断原因。
    - H5 与 Native Proposal 都只写为什么做、做什么、不做什么；页面路由和详细需求不写入 Proposal，直接进入对应 Spec。
    - 实际读取路径、读取降级、已获取/未获取字段属于执行追踪信息，不写入 `proposal.md`。
    - 逐条记录未决问题的处置状态、处置结论和确认依据；无未决问题时保留表头并删除示例行。
@@ -74,4 +72,4 @@ license: MIT
 
 ## 输出
 
-总结 change、全部文本与链接来源、读取路径、已读需求与设计稿截图、未读链接类 Design 输入、Proposal 状态、Specs、rules、agentActions、gate 结果与下一阶段。望岳 ID 仅在存在时输出。不得要求 RD 逐份确认 Specs；失败时列出原因、影响和恢复步骤。
+总结 change、全部文本与链接来源、读取路径、已读需求与设计稿截图、未读链接类 Design 输入、Proposal 状态、Specs、rules、agentActions、gate 结果与下一阶段。不得要求 RD 逐份确认 Specs；失败时列出原因、影响和恢复步骤。

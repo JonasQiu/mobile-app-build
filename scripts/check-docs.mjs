@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ignoredSegments = new Set(["node_modules", ".git", ".codegen", ".next", ".open-next", ".wrangler", "dist", "coverage"]);
-const ignoredPrefixes = ["generated", "packages/dspec-legacy", "packages/mobile-spec", "packages/codegen/tests/fixtures"];
+const ignoredPrefixes = ["generated", "packages/mobile-spec", "packages/codegen/tests/fixtures"];
 const docs = [];
 
 function isIgnored(path) {

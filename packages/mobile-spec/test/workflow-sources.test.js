@@ -21,14 +21,14 @@ test('combines a workspace text file with multiple source links', () => {
   fs.writeFileSync(path.join(projectRoot, 'requirement.md'), '需求正文', 'utf8');
   const result = parseRequirementSources({
     textFile: 'requirement.md',
-    sources: ['https://example.com/brief', 'https://cooper.example.com/document/123'],
+    sources: ['https://example.com/brief', 'https://docs.example.org/document/123'],
   }, { projectRoot });
   assert.equal(result.ok, true);
   assert.equal(result.source.type, 'composite');
   assert.equal(result.source.text, '需求正文');
   assert.equal(result.source.links.length, 2);
-  assert.equal(result.source.links[0].type, 'web');
-  assert.equal(result.source.links[1].type, 'cooper');
+  assert.equal(result.source.links[0].type, 'url');
+  assert.equal(result.source.links[1].type, 'url');
 });
 
 test('rejects text files outside the project workspace', () => {

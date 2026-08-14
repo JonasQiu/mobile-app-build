@@ -25,12 +25,10 @@ const {
   PLATFORM_TO_SCHEMA,
 } = require('../schema/register');
 const { installAgents, ALLOWED_PLATFORMS, ALLOWED_TOOLS } = require('../install/agents');
-const { installHooks } = require('../install/hooks');
-const { installMonitor } = require('../install/monitor');
 const { migrateLegacyWorkflowState } = require('../workflow/storage');
 const {
   buildConfigContent,
-  printDSkillsHint,
+  printExtensionHint,
   promptPlatform,
   promptTools,
   formatItems,
@@ -257,19 +255,6 @@ async function cmdUpdate(args, _opts = {}) {
   if (codexSkills.length > 0) {
     console.log(formatItems('codex   ', '.codex/skills/', codexSkills));
   }
-  // 2b. 安装/刷新 SDD 观察兜底 hook（机制强制，补全主动埋点漏埋）
-  const hookResult = installHooks(targetPath, { tools });
-  if (!hookResult.skipped) {
-    const targets = [
-      tools.includes('claude') ? '.claude/settings.json' : null,
-      tools.includes('codex') ? '.codex/hooks.json' : null,
-    ].filter(Boolean);
-    console.log(`  ✓ observe   → ${targets.join(' + ')}`);
-    if (tools.includes('codex')) {
-      console.log(`                Codex observe hook 已刷新（首次使用请通过 /hooks 审核信任）`);
-    }
-  }
-
   // 3. 用户确认时按新模板完整覆盖；否则只同步 schema/platform
   ensureConfig(targetPath, platform, overwriteConfig);
   console.log(`  ✓ config    → openspec/config.yaml`);
@@ -288,13 +273,8 @@ async function cmdUpdate(args, _opts = {}) {
     for (const item of migration.conflicts) console.log(`   - ${item.from}`);
   }
 
-  // 安装/刷新公司 eval 监控插件(MOBILE_SPEC_SKIP_EVAL=1 跳过;失败降级不阻断)
-  if (process.env.MOBILE_SPEC_SKIP_EVAL !== '1') {
-    installMonitor([]);
-  }
-
   console.log('\n更新完成，重启 IDE 后 Mobile Spec skills 生效。');
-  printDSkillsHint();
+  printExtensionHint();
 }
 
 module.exports = {

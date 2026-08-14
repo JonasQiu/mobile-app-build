@@ -1,14 +1,10 @@
 "use strict";
 
 /**
- * mobile-spec monitor —— 公司 eval-emit 的薄适配器
+ * Mobile Spec 本地观测状态机。
  *
- * Mobile Spec 只在 workflow 边界调用公司的五类信号。传输、重试、产物指纹比对和通过/返工
- * 判定均由公司链路负责；本模块不实现 outbox、自动重试或 validate 去重。eval-emit
- * 失败只输出 EVAL_EMIT_FAILED warning，不阻断 SDD workflow；MOBILE_SPEC_EVAL_SKIP=1 可禁用。
- * 本地状态仅用于绑定 requirement、避免明显重复 start，以及为本地看板保留区间。
- *
- * 调用入口统一由 `mobile-spec workflow hook` 持有，stage skill 不直接编排信号。
+ * Workflow 在阶段边界记录 spec、phase 和 validate 事件。状态与事件统一写入
+ * `~/.mobile-spec/monitor/` 的本地 JSON/JSONL 文件。
  *
  * exit code 语义(命令层据此决策):
  *   0 = ok / idempotent skip(PHASE_ALREADY_OPEN / SPEC_ALREADY_OPEN)
@@ -25,7 +21,7 @@ const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
-// phase 与 schema.workflow.stages 对齐；artifact 保持公司协议要求的固定枚举。
+// phase 与 schema.workflow.stages 对齐；artifact 使用稳定的本地枚举。
 const PHASE_ORDER = ["propose", "design", "task", "coding", "verify", "archive"];
 const ARTIFACTS = new Set(["proposal", "specs", "design", "review", "tasks", "verify"]);
 const LEGACY_PHASE_TO_STAGE = {
@@ -198,40 +194,19 @@ function printStatus(status, fields = {}) {
   );
 }
 
-/**
- * 转发给公司 eval-emit(wyc-ai-coding-insight 插件的 wrapper,上报 skillshub 公司平台)。
- * exit 0 只表示本地命令执行成功，不代表中心已经接收、持久化或完成判定。
- * 失败只 warning,绝不阻断 workflow(且事件无本地副本)。
- * MOBILE_SPEC_EVAL_SKIP=1 禁用;eval-emit 不在 PATH 时提示跑 `mobile-spec install-monitor`。
- */
-function runEvalEmit(argv) {
-  if (process.env.MOBILE_SPEC_EVAL_SKIP === "1") {
-    return false;
-  }
-  try {
-    execFileSync("eval-emit", argv, { stdio: ["ignore", "pipe", "pipe"] });
-    return true;
-  } catch (error) {
-    const detail =
-      error && error.code === "ENOENT"
-        ? "eval-emit not on PATH (run `mobile-spec install-monitor` to install wyc-ai-coding-insight)"
-        : (error && error.message) || String(error);
-    printStatus("EVAL_EMIT_FAILED", { event: argv[0] || "", detail });
-    return false;
-  }
-}
-
-/**
- * 事件出口(纯公司):只转发 eval-emit 上报 skillshub;无本地副本。
- * 接收 argv。失败只 warning,不阻断 workflow(且事件无副本)。
- * observe 被动兜底事件协议不匹配 eval-emit,仍由 observe.js 独立落本地。
- */
 function emitEvent(argv) {
   const event = argv[0] || "";
-  printStatus("EVENT_EMIT_START", { event, args: argv.slice(1).join(" ") });
-  const ok = runEvalEmit(argv);
-  if (ok) printStatus("EVAL_EMIT_COMMAND_SUCCEEDED", { event });
-  return ok;
+  const file = path.join(dataRoot(), "events", `${repoKey()}.jsonl`);
+  ensureDir(path.dirname(file));
+  fs.appendFileSync(file, `${JSON.stringify({
+    at: nowIso(),
+    source: EVENT_SOURCE,
+    event,
+    args: argv.slice(1),
+    repo_root: repoRoot(),
+  })}\n`);
+  printStatus("EVENT_RECORDED", { event });
+  return true;
 }
 
 function resolveRequirement(parsed) {
@@ -337,11 +312,11 @@ function commandSpecStart(args) {
   const existing = loadRequirementState(requirement);
   if (existing && existing.spec_open && !existing.spec_ended_at) {
     saveSessionBinding({ recording: true, requirement_id: requirement, bound_at: nowIso() });
-    printStatus("SPEC_ALREADY_OPEN", { requirement, eval_emit: "skipped" });
+    printStatus("SPEC_ALREADY_OPEN", { requirement, event_record: "skipped" });
     return;
   }
   if (existing && existing.spec_ended_at) {
-    printStatus("SPEC_ALREADY_ENDED", { requirement, eval_emit: "skipped" });
+    printStatus("SPEC_ALREADY_ENDED", { requirement, event_record: "skipped" });
     process.exitCode = 1;
     return;
   }
@@ -384,7 +359,7 @@ function commandPhaseStart(phase, args) {
 
   if (state.current_phase) {
     if (state.current_phase === phase) {
-      printStatus("PHASE_ALREADY_OPEN", { requirement, phase, eval_emit: "skipped" });
+      printStatus("PHASE_ALREADY_OPEN", { requirement, phase, event_record: "skipped" });
       return;
     }
     printStatus("PHASE_END_CONFIRM_REQUIRED", {
@@ -560,7 +535,6 @@ module.exports = {
   // 导出便于测试
   parseArgs,
   emitEvent,
-  runEvalEmit,
   dataRoot,
   stateRoot,
   repoKey,

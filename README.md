@@ -37,15 +37,14 @@ Mobile Web（OpenAI Sites + D1）
 - 当前生成站点使用 Cloudflare Quick Tunnel，仅适合开发和验收，无持久 URL 与 SLA；不得作为生产托管宣传。
 - Runner job、progress 和 message 当前保存在 Runner 内存；Runner 重启后，已完成项目仍保留在 D1，但执行中消息不能恢复。
 - 源码 checkpoint、ZIP 下载、取消、暂停、持久事件库、正式部署 Provider 尚未实现。
-- `@mobile-app-build/mobile-spec` 仍是通用化工作副本，完成全平台等价验收前不得声明完整替换。
+- `@mobile-app-build/mobile-spec` 是仓库自研的规格工作流；当前 Web 链路已投入使用，原生平台能力仍在持续完善。
 
 ## 目录
 
 - `apps/web/`：移动端控制站、认证、项目 API、历史详情与实时执行 UI。
 - `packages/codegen/`：受信任 Node Runner、Codex/OpenAI Provider、Mobile Spec、生成、构建和部署检查。
 - `templates/next-web/`：中立 Next.js 生成模板。
-- `packages/dspec-legacy/`：`@didi/dspec@1.11.0` 原始快照。
-- `packages/mobile-spec/`：Mobile Spec 通用化工作副本。
+- `packages/mobile-spec/`：自研 Mobile Spec 工作流、门禁、Schema 与阶段 Skills。
 - `docs/`：产品、架构、协议、数据、安全、部署和路线图文档。
 
 ## 本地开发
