@@ -63,3 +63,19 @@ test("trusted runner supports single-stage execution and artifact reads", async 
   assert.match(runner, /执行实现前需要成功的 Mobile Spec 检查点/);
   assert.match(runner, /执行构建前需要成功的实现检查点/);
 });
+
+test("failed steps resume in place while only an explicit rerun clears work", async () => {
+  const runner = await readFile(runnerUrl, "utf8");
+  const generate = await readFile(new URL("../src/generate.js", import.meta.url), "utf8");
+  const stepBranch = runner.slice(runner.indexOf('} else if (job.mode === "step")'), runner.indexOf("} else {", runner.indexOf('} else if (job.mode === "step")')));
+  const continueBranch = runner.slice(runner.indexOf("} else {", runner.indexOf('} else if (job.mode === "step")')), runner.indexOf("throwIfPaused(signal);", runner.indexOf("} else {", runner.indexOf('} else if (job.mode === "step")'))));
+  assert.doesNotMatch(stepBranch, /await rm\(/);
+  assert.doesNotMatch(stepBranch, /invalidateOutputAfter/);
+  assert.doesNotMatch(continueBranch, /await rm\(/);
+  assert.match(runner, /resume: job\.mode !== "rerun"/);
+  assert.match(runner, /checkpoints\.includes\(target\)/);
+  assert.match(runner, /直接复用检查点，不重新执行/);
+  assert.match(generate, /readRepairState\(\{ outDir, requirement, stage: "build" \}\)/);
+  assert.match(generate, /prevBuildError: repairError/);
+  assert.match(generate, /writeRepairState\(\{ outDir, requirement, stage: "build"/);
+});

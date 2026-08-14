@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export const EXECUTION_STAGES = ["mobile-spec", "implementation", "build", "deployment"];
@@ -9,6 +9,7 @@ const SPEC_MARKER = "mobile-build-checkpoint.json";
 const OUTPUT_MARKER = ".mobile-build-checkpoint.json";
 const BUILD_LOG = ".mobile-build-build.log";
 const DEPLOYMENT_EVIDENCE = ".mobile-build-deployment.json";
+const REPAIR_STATE = ".mobile-build-repair.json";
 const MAX_ARTIFACT_CHARS = 120_000;
 
 export function hashRequirement(requirement) {
@@ -142,6 +143,33 @@ export async function writeBuildLog(outDir, log) {
 
 export async function writeDeploymentEvidence(outDir, evidence) {
   await writeJson(join(outDir, DEPLOYMENT_EVIDENCE), evidence);
+}
+
+export async function readDeploymentEvidence(outDir) {
+  return readJson(join(outDir, DEPLOYMENT_EVIDENCE));
+}
+
+export async function readRepairState({ outDir, requirement, stage }) {
+  const state = await readJson(join(outDir, REPAIR_STATE));
+  if (!state || state.requirementHash !== hashRequirement(requirement) || state.stage !== stage || !state.error) return null;
+  return state;
+}
+
+export async function writeRepairState({ outDir, requirement, stage, error, attempts = 1 }) {
+  const state = {
+    schemaVersion: 1,
+    requirementHash: hashRequirement(requirement),
+    stage,
+    error: String(error || "").slice(-24_000),
+    attempts,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeJson(join(outDir, REPAIR_STATE), state);
+  return state;
+}
+
+export async function clearRepairState(outDir) {
+  await rm(join(outDir, REPAIR_STATE), { force: true });
 }
 
 export async function inspectCheckpoints({ outDir, specWorkRoot, requirement }) {

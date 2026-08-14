@@ -16,7 +16,7 @@ function yes(source, pattern) {
   return pattern.test(source) ? "已实现" : "未检测到";
 }
 
-const [app, projects, projectDelete, jobs, pause, artifacts, runner, generate, checkpoints, manifest, serverAuth] = await Promise.all([
+const [app, projects, projectDelete, jobs, pause, artifacts, runner, generate, checkpoints, specWorkflow, manifest, serverAuth] = await Promise.all([
   text("apps/web/app/MobileBuildApp.tsx"),
   text("apps/web/app/api/projects/route.ts"),
   text("apps/web/app/api/projects/[projectId]/route.ts"),
@@ -26,6 +26,7 @@ const [app, projects, projectDelete, jobs, pause, artifacts, runner, generate, c
   text("packages/codegen/runner.mjs"),
   text("packages/codegen/src/generate.js"),
   text("packages/codegen/src/checkpoints.js"),
+  text("packages/codegen/src/spec-workflow.js"),
   text("packages/codegen/src/manifest-schema.js"),
   text("apps/web/app/lib/server-auth.ts"),
 ]);
@@ -40,6 +41,7 @@ const facts = [
   ["暂停与继续执行", yes(app + pause + runner, /暂停执行[\s\S]*status = 'paused'[\s\S]*jobControllers/), "Runner 中断当前子进程；继续复用成功检查点，重跑才从头执行"],
   ["单步执行", yes(app + jobs + runner, /label: "规格"[\s\S]*targetStage[\s\S]*mode === "step"/), "规格、实现、构建、部署可单独指定"],
   ["阶段检查点", yes(checkpoints, /findLegacySpecMarker/), "成功步骤按需求哈希持久化，旧产物自动迁移，后续继续不重复构建"],
+  ["失败步骤原地续修", yes(runner + generate + specWorkflow, /直接复用检查点，不重新执行[\s\S]*readRepairState[\s\S]*mobile-spec-progress\.json/), "Mobile Spec 复用成功子阶段；Codex/构建沿用最近错误定向修复；仅重跑清空"],
   ["产物预览", yes(app + artifacts + checkpoints, /MarkdownPreview[\s\S]*readStageArtifacts/), "步骤文件可独立读取，md 产物按 Markdown 渲染"],
   ["可信状态同步", yes(projects, /executionEvents/), "控制站服务端轮询 Runner，不接受浏览器终态"],
   ["受信任派发", yes(jobs, /CODEX_RUNNER_TOKEN/), "服务端 Bearer token 派发"],
@@ -50,7 +52,7 @@ const facts = [
   ["D1 persistence", yes(serverAuth, /env\.DB/), "项目、会话与历史记录持久化"],
 ];
 
-const sources = [app, projects, projectDelete, jobs, pause, artifacts, runner, generate, checkpoints, manifest, serverAuth].join("\n");
+const sources = [app, projects, projectDelete, jobs, pause, artifacts, runner, generate, checkpoints, specWorkflow, manifest, serverAuth].join("\n");
 const digest = createHash("sha256").update(sources).digest("hex").slice(0, 16);
 const body = `# 实现状态快照
 

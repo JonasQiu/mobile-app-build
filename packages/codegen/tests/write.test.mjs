@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -32,6 +32,41 @@ test("writeManifest writes nested files and creates parent dirs", async () => {
     assert.equal(page, pageContent);
     const manifest = JSON.parse(await readFile(join(out, "mobile-build-manifest.json"), "utf8"));
     assert.equal(manifest.source, "requirement-and-mobile-spec");
+    assert.deepEqual(manifest.generatedFiles, ["lib/data.ts", "app/courses/page.tsx"]);
+  } finally {
+    await rm(out, { recursive: true, force: true });
+  }
+});
+
+test("writeManifest removes stale generated routes during a targeted repair", async () => {
+  const out = tmpOut();
+  try {
+    const base = {
+      siteName: "测试网站",
+      brand: { accentColor: "#123456", mode: "light", slogan: "测试" },
+      navRoutes: [{ href: "/", fileSubpath: "app/page.tsx" }],
+    };
+    await writeManifest(out, {
+      ...base,
+      files: [
+        { path: "app/page.tsx", content: "export default function Page() { return null; }\n" },
+        { path: "app/records/page.tsx", content: "export default function Records() { return null; }\n" },
+      ],
+    });
+    assert.equal(existsSync(join(out, "app/records/page.tsx")), true);
+    await writeManifest(out, {
+      ...base,
+      files: [{ path: "app/page.tsx", content: "export default function Page() { return <main />; }\n" }],
+    });
+    assert.equal(existsSync(join(out, "app/records/page.tsx")), false);
+
+    await writeFile(join(out, "mobile-build-manifest.json"), JSON.stringify({ source: "legacy" }));
+    await writeFile(join(out, "app/stale.tsx"), "stale");
+    await writeManifest(out, {
+      ...base,
+      files: [{ path: "app/page.tsx", content: "export default function Page() { return null; }\n" }],
+    });
+    assert.equal(existsSync(join(out, "app/stale.tsx")), false);
   } finally {
     await rm(out, { recursive: true, force: true });
   }

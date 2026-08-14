@@ -5,16 +5,76 @@
 // enforced retry. No OpenAI calls here.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { hashRequirement } from "./checkpoints.js";
 import { authorProposal, authorDesign, authorTasks } from "./spec-llm.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
 
 export const MOBILE_SPEC_BIN = join(repoRoot, "packages", "mobile-spec", "bin", "mobile-spec.js");
+const SPEC_PROGRESS_MARKER = "mobile-spec-progress.json";
+const SPEC_STAGES = ["propose", "design", "task"];
+
+async function readJson(path) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export async function readSpecProgress({ workRoot, requirement, change }) {
+  const state = await readJson(join(workRoot, SPEC_PROGRESS_MARKER));
+  if (!state || state.requirementHash !== hashRequirement(requirement) || state.change !== change) return null;
+  if (!Array.isArray(state.completedStages) || state.completedStages.some((stage) => !SPEC_STAGES.includes(stage))) return null;
+  if (state.completedStages.some((stage, index) => stage !== SPEC_STAGES[index])) return null;
+  const completed = [...state.completedStages];
+  return { ...state, completedStages: completed };
+}
+
+export async function writeSpecProgress({ workRoot, requirement, change, pageSpecId, completedStages, stageAttempts = {}, lastStage = null, lastError = "" }) {
+  const state = {
+    schemaVersion: 1,
+    requirementHash: hashRequirement(requirement),
+    change,
+    pageSpecId,
+    completedStages: SPEC_STAGES.filter((stage) => completedStages.includes(stage)),
+    stageAttempts,
+    lastStage,
+    lastError: String(lastError || "").slice(-12_000),
+    updatedAt: new Date().toISOString(),
+  };
+  await mkdir(workRoot, { recursive: true });
+  await writeFile(join(workRoot, SPEC_PROGRESS_MARKER), `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  return state;
+}
+
+async function loadCompletedArtifacts({ workRoot, change, state }) {
+  const completed = new Set(state.completedStages);
+  const pageSpecId = state.pageSpecId || "site";
+  const base = join(workRoot, "openspec", "changes", change);
+  const result = { proposalMd: "", specMd: "", designMd: "", reviewMd: "", tasksMd: "", pageSpecId };
+  if (completed.has("propose")) {
+    result.proposalMd = await readFile(join(base, "proposal.md"), "utf8");
+    result.specMd = await readFile(join(base, "specs", pageSpecId, "spec.md"), "utf8");
+  }
+  if (completed.has("design")) {
+    result.designMd = await readFile(join(base, "design.md"), "utf8");
+    result.reviewMd = await readFile(join(base, "review.md"), "utf8");
+  }
+  if (completed.has("task")) result.tasksMd = await readFile(join(base, "tasks.md"), "utf8");
+  const required = completed.has("task")
+    ? [result.proposalMd, result.specMd, result.designMd, result.reviewMd, result.tasksMd]
+    : completed.has("design")
+      ? [result.proposalMd, result.specMd, result.designMd, result.reviewMd]
+      : completed.has("propose") ? [result.proposalMd, result.specMd] : [];
+  if (required.some((content) => !String(content).trim())) throw new Error("Mobile Spec 子阶段检查点缺少产物");
+  return result;
+}
 
 function slugify(value) {
   const base = String(value || "")
@@ -159,22 +219,31 @@ function gateMessages(check) {
 // artifacts, writes them into specWorkspace, and RETURNS the node/file pairs it
 // produced (as [{node, relPath}]) — necessary for the propose stage, whose spec
 // path depends on pageSpecId which is only known after authoring.
-async function runStage(specWorkspace, env, change, stageId, authorAndWrite, onProgress, signal, maxRetries = 2) {
+async function runStage(specWorkspace, env, change, stageId, authorAndWrite, onProgress, signal, maxRetries = 2, initialGateError = "", attemptOffset = 0) {
   const ms = (args) => runMobileSpec(args, { cwd: specWorkspace, env, signal });
   const maxAttempts = maxRetries + 1;
 
   const preStage = await ms(hookArgs("preStage", change, ["--stage", stageId]));
   if (!preStage.ok) {
-    return { ok: false, attempts: 0, check: null, reason: preStage.json?.message || preStage.stderr || `${stageId} preStage failed` };
+    return { ok: false, attempts: attemptOffset, check: null, reason: preStage.json?.message || preStage.stderr || `${stageId} preStage failed` };
   }
 
   let attempt = 0;
-  let prevGateError = "";
+  let prevGateError = initialGateError;
   let check = null;
   while (attempt < maxAttempts) {
     attempt += 1;
     signal?.throwIfAborted();
-    const nodes = await authorAndWrite(attempt, prevGateError);
+    const currentAttempt = attemptOffset + attempt;
+    let nodes;
+    try {
+      nodes = await authorAndWrite(currentAttempt, prevGateError);
+    } catch (error) {
+      if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+      prevGateError = error instanceof Error ? error.message : String(error);
+      onProgress({ stage: `spec-${stageId}`, attempt: currentAttempt, ok: false, reason: prevGateError });
+      continue;
+    }
     let nodeFailure = "";
     for (const { node, relPath } of nodes) {
       const postNode = await ms(hookArgs("postNode", change, ["--stage", stageId, "--node", node, "--file", relPath]));
@@ -185,19 +254,19 @@ async function runStage(specWorkspace, env, change, stageId, authorAndWrite, onP
     }
     if (nodeFailure) {
       prevGateError = nodeFailure;
-      onProgress({ stage: `spec-${stageId}`, attempt, ok: false, reason: prevGateError });
+      onProgress({ stage: `spec-${stageId}`, attempt: currentAttempt, ok: false, reason: prevGateError });
       continue;
     }
     const post = await ms(hookArgs("postStage", change, ["--stage", stageId]));
     check = post.json?.deterministic?.check ?? null;
     if (check?.ok) {
-      onProgress({ stage: `spec-${stageId}`, attempt, ok: true });
-      return { ok: true, attempts: attempt, check };
+      onProgress({ stage: `spec-${stageId}`, attempt: currentAttempt, ok: true });
+      return { ok: true, attempts: currentAttempt, check };
     }
     prevGateError = gateMessages(check).join("\n") || "stage gate failed";
-    onProgress({ stage: `spec-${stageId}`, attempt, ok: false, reason: prevGateError });
+    onProgress({ stage: `spec-${stageId}`, attempt: currentAttempt, ok: false, reason: prevGateError });
   }
-  return { ok: false, attempts: attempt, check, reason: prevGateError };
+  return { ok: false, attempts: attemptOffset + attempt, check, reason: prevGateError };
 }
 
 export async function runSpecWorkflow({
@@ -209,6 +278,7 @@ export async function runSpecWorkflow({
   change,
   maxRetriesPerStage = 2,
   signal,
+  resume = false,
 }) {
   const progress = typeof onProgress === "function" ? onProgress : () => {};
   if (!existsSync(MOBILE_SPEC_BIN)) {
@@ -216,8 +286,19 @@ export async function runSpecWorkflow({
   }
   const changeName = change || slugify(requirement);
   signal?.throwIfAborted();
-  await rm(workRoot, { recursive: true, force: true });
-  signal?.throwIfAborted();
+  let resumeState = resume ? await readSpecProgress({ workRoot, requirement, change: changeName }) : null;
+  let resumedArtifacts = null;
+  if (resumeState) {
+    try {
+      resumedArtifacts = await loadCompletedArtifacts({ workRoot, change: changeName, state: resumeState });
+    } catch {
+      resumeState = null;
+    }
+  }
+  if (!resumeState) {
+    await rm(workRoot, { recursive: true, force: true });
+    signal?.throwIfAborted();
+  }
   await createSpecWorkspace({ workRoot, requirement, change: changeName });
   const specWorkspace = workRoot;
   const env = mobileSpecEnv(specWorkspace);
@@ -230,32 +311,59 @@ export async function runSpecWorkflow({
   // and ensureChangeSidecar only creates the state dir — so the source change
   // dir (openspec/changes/<change>/) need not exist yet; it's created lazily
   // when the propose artifacts are written below.
-  const preNew = await ms(hookArgs("preNew", changeName, ["--text-file", reqFile]));
-  if (!preNew.ok) {
-    return { ok: false, reason: `preNew failed: ${preNew.json.message || preNew.stderr.slice(-400)}` };
-  }
-  const postNew = await ms(hookArgs("postNew", changeName, ["--text-file", reqFile]));
-  if (!postNew.ok) {
-    return { ok: false, reason: `postNew failed: ${postNew.json.message || postNew.stderr.slice(-400)}` };
+  if (!resumeState) {
+    const preNew = await ms(hookArgs("preNew", changeName, ["--text-file", reqFile]));
+    if (!preNew.ok) {
+      return { ok: false, reason: `preNew failed: ${preNew.json?.message || preNew.stderr.slice(-400)}` };
+    }
+    const postNew = await ms(hookArgs("postNew", changeName, ["--text-file", reqFile]));
+    if (!postNew.ok) {
+      return { ok: false, reason: `postNew failed: ${postNew.json?.message || postNew.stderr.slice(-400)}` };
+    }
+    resumeState = await writeSpecProgress({
+      workRoot,
+      requirement,
+      change: changeName,
+      pageSpecId: "site",
+      completedStages: [],
+    });
   }
 
-  const stageResults = {};
-  let proposalMd = "";
-  let specMd = "";
-  let pageSpecId = "site";
-  let designMd = "";
-  let reviewMd = "";
-  let tasksMd = "";
+  const completedStages = [...resumeState.completedStages];
+  const stageAttempts = { ...(resumeState.stageAttempts || {}) };
+  const stageResults = Object.fromEntries(completedStages.map((stage) => [stage, { ok: true, checkpointed: true, attempts: stageAttempts[stage] || 0 }]));
+  let proposalMd = resumedArtifacts?.proposalMd || "";
+  let specMd = resumedArtifacts?.specMd || "";
+  let pageSpecId = resumedArtifacts?.pageSpecId || resumeState.pageSpecId || "site";
+  let designMd = resumedArtifacts?.designMd || "";
+  let reviewMd = resumedArtifacts?.reviewMd || "";
+  let tasksMd = resumedArtifacts?.tasksMd || "";
+
+  const saveProgress = async (lastStage = null, lastError = "") => {
+    resumeState = await writeSpecProgress({
+      workRoot,
+      requirement,
+      change: changeName,
+      pageSpecId,
+      completedStages,
+      stageAttempts,
+      lastStage,
+      lastError,
+    });
+  };
 
   // --- PROPOSE: proposal.md + specs/<id>/spec.md ---
-  progress({ stage: "spec-propose", phase: "start" });
-  const propose = await runStage(
+  if (completedStages.includes("propose")) {
+    progress({ stage: "spec-propose", phase: "reused", ok: true, attempt: stageAttempts.propose || 0 });
+  } else {
+    progress({ stage: "spec-propose", phase: "start" });
+    const propose = await runStage(
     specWorkspace,
     env,
     changeName,
     "propose",
-    async () => {
-      const authored = await authorProposal({ requirement, apiKey, model, signal });
+    async (attempt, prevGateError) => {
+      const authored = await authorProposal({ requirement, apiKey, model, attempt, prevGateError, signal });
       pageSpecId = authored.pageSpecId || pageSpecId;
       proposalMd = authored.proposalMd;
       specMd = authored.specMd;
@@ -271,21 +379,31 @@ export async function runSpecWorkflow({
     progress,
     signal,
     maxRetriesPerStage,
-  );
-  stageResults.propose = propose;
-  if (!propose.ok) {
-    return { ok: false, reason: `propose stage failed: ${propose.reason || "gate"}`, stageResults, change: changeName, pageSpecId };
+    resumeState.lastStage === "propose" ? resumeState.lastError : "",
+    stageAttempts.propose || 0,
+    );
+    stageResults.propose = propose;
+    stageAttempts.propose = propose.attempts;
+    if (!propose.ok) {
+      await saveProgress("propose", propose.reason);
+      return { ok: false, reason: `propose stage failed: ${propose.reason || "gate"}`, stageResults, change: changeName, pageSpecId };
+    }
+    completedStages.push("propose");
+    await saveProgress();
   }
 
   // --- DESIGN: design.md + review.md ---
-  progress({ stage: "spec-design", phase: "start" });
-  const design = await runStage(
+  if (completedStages.includes("design")) {
+    progress({ stage: "spec-design", phase: "reused", ok: true, attempt: stageAttempts.design || 0 });
+  } else {
+    progress({ stage: "spec-design", phase: "start" });
+    const design = await runStage(
     specWorkspace,
     env,
     changeName,
     "design",
-    async () => {
-      const authored = await authorDesign({ requirement, proposalMd, specMd, apiKey, model, signal });
+    async (attempt, prevGateError) => {
+      const authored = await authorDesign({ requirement, proposalMd, specMd, apiKey, model, attempt, prevGateError, signal });
       designMd = authored.designMd;
       reviewMd = authored.reviewMd;
       const designPath = `openspec/changes/${changeName}/design.md`;
@@ -300,15 +418,25 @@ export async function runSpecWorkflow({
     progress,
     signal,
     maxRetriesPerStage,
-  );
-  stageResults.design = design;
-  if (!design.ok) {
-    return { ok: false, reason: `design stage failed: ${design.reason || "gate"}`, stageResults, change: changeName, pageSpecId };
+    resumeState.lastStage === "design" ? resumeState.lastError : "",
+    stageAttempts.design || 0,
+    );
+    stageResults.design = design;
+    stageAttempts.design = design.attempts;
+    if (!design.ok) {
+      await saveProgress("design", design.reason);
+      return { ok: false, reason: `design stage failed: ${design.reason || "gate"}`, stageResults, change: changeName, pageSpecId };
+    }
+    completedStages.push("design");
+    await saveProgress();
   }
 
   // --- TASK: tasks.md ---
-  progress({ stage: "spec-task", phase: "start" });
-  const task = await runStage(
+  if (completedStages.includes("task")) {
+    progress({ stage: "spec-task", phase: "reused", ok: true, attempt: stageAttempts.task || 0 });
+  } else {
+    progress({ stage: "spec-task", phase: "start" });
+    const task = await runStage(
     specWorkspace,
     env,
     changeName,
@@ -333,10 +461,17 @@ export async function runSpecWorkflow({
     progress,
     signal,
     maxRetriesPerStage,
-  );
-  stageResults.task = task;
-  if (!task.ok) {
-    return { ok: false, reason: `task stage failed: ${task.reason || "gate"}`, stageResults, change: changeName, pageSpecId };
+    resumeState.lastStage === "task" ? resumeState.lastError : "",
+    stageAttempts.task || 0,
+    );
+    stageResults.task = task;
+    stageAttempts.task = task.attempts;
+    if (!task.ok) {
+      await saveProgress("task", task.reason);
+      return { ok: false, reason: `task stage failed: ${task.reason || "gate"}`, stageResults, change: changeName, pageSpecId };
+    }
+    completedStages.push("task");
+    await saveProgress();
   }
 
   return {

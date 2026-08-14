@@ -69,9 +69,9 @@ Runner 为每个项目创建隔离工作区，并按以下顺序执行：
 6. 将通过门禁的 artifact 提供给 Codex 生成页面。
 7. 执行文件校验、`npm ci`、生产构建、部署与公网健康检查。
 
-任一 Mobile Spec artifact 缺失、状态错误或 gate 失败时，Runner 停止后续实现，不生成交付 URL。
+任一 Mobile Spec artifact 缺失、状态错误或 gate 失败时，Runner 停止后续实现，不生成交付 URL。失败状态会保存当前子阶段、累计尝试次数和 gate/生成错误，后续继续不会回到 Proposal 起点。
 
-Mobile Spec 全部通过后，Runner 写入绑定原始需求 SHA-256 的规格检查点，记录 `change` 与 `pageSpecId`。继续执行只有在 marker 和 Proposal、Spec、Design、Review、Tasks 五份文件都存在且非空时才复用；单独重跑规格会清除下游实现、构建和部署检查点。
+Mobile Spec 运行中使用 `mobile-spec-progress.json` 保存 `propose → design → task` 的连续成功前缀、`pageSpecId`、各阶段尝试次数与最近错误。继续或失败规格单步会校验需求哈希和文件完整性，复用已成功子阶段，只重新调用当前失败子阶段。全部通过后，Runner 再写入绑定原始需求 SHA-256 的正式规格检查点，记录 `change` 与 `pageSpecId`。只有用户明确选择“重跑”才清除规格与下游工作区。
 
 控制站的步骤产物面板通过受鉴权 Runner 接口读取这五份 `.md` 文件，并在浏览器中安全渲染 Markdown；不允许浏览器传入任意文件路径。
 

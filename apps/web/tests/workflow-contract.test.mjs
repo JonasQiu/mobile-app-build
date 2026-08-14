@@ -157,3 +157,17 @@ test("successful stages are reusable, individually executable, and expose Markdo
   assert.match(deliveryRoute, /body\?\.status === "checkpointed"/);
   assert.match(projectsRoute, /job\.status === "checkpointed"/);
 });
+
+test("failed single steps retain their error context and repair in place", async () => {
+  const jobsRoute = await readFile(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root), "utf8");
+  const runner = await readFile(new URL("runner.mjs", codegen), "utf8");
+  const generate = await readFile(new URL("src/generate.js", codegen), "utf8");
+  const specWorkflow = await readFile(new URL("src/spec-workflow.js", codegen), "utf8");
+  assert.match(jobsRoute, /失败则沿用该步骤的错误上下文原地修复/);
+  assert.match(jobsRoute, /previousDeliveryUrl: project\.previewUrl/);
+  assert.match(runner, /finishReusedJob/);
+  assert.match(generate, /readRepairState/);
+  assert.match(generate, /prevBuildError: repairError/);
+  assert.match(specWorkflow, /mobile-spec-progress\.json/);
+  assert.match(specWorkflow, /phase: "reused"/);
+});

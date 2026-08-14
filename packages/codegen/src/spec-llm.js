@@ -70,7 +70,7 @@ async function parseCall(client, model, schema, name, messages, signal) {
   return parsed;
 }
 
-export async function authorProposal({ requirement, apiKey, model, signal }) {
+export async function authorProposal({ requirement, apiKey, model, attempt = 1, prevGateError = "", signal }) {
   const { client: ai, model: defaultModel } = client(apiKey);
   const system = [
     "你是一名资深前端 spec 作者。任务：为一句中文需求，产出可构建的多页 Next.js 网站的 Proposal 与 Spec。",
@@ -79,7 +79,10 @@ export async function authorProposal({ requirement, apiKey, model, signal }) {
     "Proposal 正文必须清楚说明为什么做、做什么、不做什么；Spec 必须包含页面与路由、共享组件、数据模型、交互、状态、视觉约束和可验证验收标准。",
     "只依据本次用户需求写规格，不使用任何示例项目、预设业务或固定页面。",
   ];
-  const user = `# 本次需求\n${requirement}\n\n请返回 pageSpecId（kebab-case）、proposalBodyMd（Proposal 正文，不含 status/未决问题）、specMd（自由格式 Spec）。所有内容必须可追踪到本次需求。`;
+  let user = `# 本次需求\n${requirement}\n\n请返回 pageSpecId（kebab-case）、proposalBodyMd（Proposal 正文，不含 status/未决问题）、specMd（自由格式 Spec）。所有内容必须可追踪到本次需求。`;
+  if (attempt > 1 && prevGateError) {
+    user += `\n\n# 第 ${attempt} 次定向修复\n上次 Proposal/Spec 未通过生成或门禁：\n${prevGateError}\n只修复上述问题，并重新输出完整结果。`;
+  }
   const parsed = await parseCall(ai, model || defaultModel, ProposalAuthor, "proposal_author", [
     { role: "system", content: system.join("\n\n") },
     { role: "user", content: user },
@@ -91,14 +94,17 @@ export async function authorProposal({ requirement, apiKey, model, signal }) {
   };
 }
 
-export async function authorDesign({ requirement, proposalMd, specMd, apiKey, model, signal }) {
+export async function authorDesign({ requirement, proposalMd, specMd, apiKey, model, attempt = 1, prevGateError = "", signal }) {
   const { client: ai, model: defaultModel } = client(apiKey);
   const system = [
     "你是资深前端架构师。基于已确认的 Proposal 与 Spec，产出 Design（实现方案）与 Review（设计评审）。",
     "Design 必须包含整体方案、实现改动、验证方案和必要的风险说明。",
     "Review 正文写完五维评审（越界/矛盾/遗漏/不可追踪/模糊项）即可。**不要**写 `status:` 行（引擎会自动补 `status: pass`）。",
   ];
-  const user = `# 需求\n${requirement}\n\n# Proposal\n${proposalMd}\n\n# Spec\n${specMd}\n\n返回 designMd 与 reviewBodyMd（不含 status 行）。`;
+  let user = `# 需求\n${requirement}\n\n# Proposal\n${proposalMd}\n\n# Spec\n${specMd}\n\n返回 designMd 与 reviewBodyMd（不含 status 行）。`;
+  if (attempt > 1 && prevGateError) {
+    user += `\n\n# 第 ${attempt} 次定向修复\n上次 Design/Review 未通过生成或门禁：\n${prevGateError}\n只修复上述问题，并重新输出完整结果。`;
+  }
   const parsed = await parseCall(ai, model || defaultModel, DesignAuthor, "design_author", [
     { role: "system", content: system.join("\n\n") },
     { role: "user", content: user },

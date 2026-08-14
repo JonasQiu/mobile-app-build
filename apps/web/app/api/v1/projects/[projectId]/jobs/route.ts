@@ -122,7 +122,7 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
     `项目 ID：${project.id}`,
     `原始需求：${project.prompt}`,
     "严格按顺序执行：Mobile Spec Proposal/Specs/Design/Review/Tasks 门禁 → Codex 实现 → npm ci → 测试与生产构建 → DeploymentProvider 发布 → 健康检查。",
-    mode === "rerun" ? "本次明确要求重新执行：清除已有检查点后完整重建。" : mode === "step" ? `本次只执行指定步骤：${targetStage}。` : "复用同一需求中已经成功的步骤，从第一个未完成步骤继续。",
+    mode === "rerun" ? "本次明确要求重新执行：清除已有检查点后完整重建。" : mode === "step" ? `本次只处理指定步骤：${targetStage}；已成功则直接复用，失败则沿用该步骤的错误上下文原地修复。` : "复用同一需求中已经成功的步骤，从第一个未完成步骤的失败位置继续修复。",
     "任何阶段失败都必须报告失败，禁止生成站内 /preview URL，禁止把记录页或模板页当成交付物。",
   ].join("\n");
 
@@ -142,6 +142,7 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
         callbackUrl,
         mode,
         targetStage,
+        previousDeliveryUrl: project.previewUrl,
       }),
     });
   } catch (error) {

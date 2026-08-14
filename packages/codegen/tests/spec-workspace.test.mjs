@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 
-import { createSpecWorkspace, runMobileSpec, mobileSpecEnv } from "../src/spec-workflow.js";
+import { createSpecWorkspace, readSpecProgress, runMobileSpec, mobileSpecEnv, writeSpecProgress } from "../src/spec-workflow.js";
 
 function tmpRoot() {
   return join(tmpdir(), `mbcodegen-spec-ws-${randomUUID()}`);
@@ -113,6 +113,29 @@ test("runMobileSpec rejects immediately when the job is paused", async () => {
       runMobileSpec(["--help"], { cwd: root, env: mobileSpecEnv(root), signal: controller.signal }),
       (error) => error?.name === "AbortError",
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Mobile Spec substage progress is requirement-scoped and preserves the failed stage error", async () => {
+  const root = tmpRoot();
+  try {
+    await writeSpecProgress({
+      workRoot: root,
+      requirement: "做一个预约网站",
+      change: "booking-site",
+      pageSpecId: "booking",
+      completedStages: ["propose"],
+      stageAttempts: { propose: 1, design: 3 },
+      lastStage: "design",
+      lastError: "review gate failed",
+    });
+    const state = await readSpecProgress({ workRoot: root, requirement: "做一个预约网站", change: "booking-site" });
+    assert.deepEqual(state?.completedStages, ["propose"]);
+    assert.equal(state?.lastStage, "design");
+    assert.equal(state?.lastError, "review gate failed");
+    assert.equal(await readSpecProgress({ workRoot: root, requirement: "另一个需求", change: "booking-site" }), null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

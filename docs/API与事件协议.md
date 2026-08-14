@@ -107,11 +107,12 @@ Body：
   "instructions": "服务端执行约束",
   "callbackUrl": "https://control.example/api/v1/projects/prj_.../delivery",
   "mode": "continue",
-  "targetStage": null
+  "targetStage": null,
+  "previousDeliveryUrl": "https://generated.example"
 }
 ```
 
-`mode` 可为 `continue | rerun | step`。`continue` 校验需求哈希并复用成功检查点；`rerun` 清除工作区后完整执行；`step` 必须指定 `mobile-spec | implementation | build | deployment` 之一，前置检查点不足时失败。返回 `202` 与异步 job；相同 `projectId` 正在运行时返回现有 job。已交付任务使用 `continue` 且 Runner 仍持有相同 job 时直接返回原交付，不重新构建。
+`mode` 可为 `continue | rerun | step`。`continue` 校验需求哈希、复用成功检查点，并从首个失败位置续修；`rerun` 清除工作区后完整执行；`step` 必须指定 `mobile-spec | implementation | build | deployment` 之一，前置检查点不足时失败，目标已成功时直接复用，目标失败时沿用该步骤错误上下文继续。`previousDeliveryUrl` 由控制面从当前项目记录传入，用于完整部署检查点复用时保留已验证 URL。返回 `202` 与异步 job；相同 `projectId` 正在运行时返回现有 job。
 
 兼容升级前工作区：若需求文件内容一致、五份规格文档完整、manifest 存在，并且 `.next/BUILD_ID` 与 Next 可执行文件存在，Runner 会一次性写入新 marker，把现有成功结果作为 Mobile Spec、implementation、build 检查点复用。
 
@@ -156,9 +157,11 @@ Body：
 
 失败包含 `status: "failed"`、`stage: "failed"` 和裁剪后的 `error`。
 
-单步成功包含 `status: "checkpointed"`、指定 `stage` 和已完成的 `checkpoints`，控制面将项目写为 `ready`，不生成交付 URL。
+新完成或复用的非部署单步包含 `status: "checkpointed"`、指定 `stage` 和已完成的 `checkpoints`，控制面将项目写为 `ready`，不生成新交付 URL。如果已有完整 deployment 检查点、三项证据和外部 URL，则返回原 `delivered`，不重新部署也不丢失 URL。
 
-若 Codex 返回重复 `navRoutes.href`，Runner 在 Manifest 规范化阶段保留第一项并去重；仍有至少 4 个不同路由时继续构建，不足 4 个或存在其他结构错误时把诊断作为下一次生成输入，最多尝试三次。每次结构重试都写入 `implementation` 阶段的 warning event。
+若 Codex 返回重复 `navRoutes.href`，Runner 在 Manifest 规范化阶段保留第一项并去重；仍有至少 4 个不同路由时继续构建，不足 4 个或存在其他结构错误时把诊断作为下一次生成输入，单个 job 最多尝试三次。失败诊断按需求哈希持久化，下一次继续在原累计尝试次数后续修。manifest 同时记录 `generatedFiles`；修复写入前删除旧清单中已移除的文件，避免遗留 `app/.../page.tsx` 再次形成重复路由。
+
+Mobile Spec 使用独立子阶段 marker 保存 propose/design/task 的连续成功前缀、累计尝试次数和最近生成或 gate 错误。失败后再次执行规格时，Runner 先复用完整的上游 Markdown 产物，再只调用当前失败子阶段。
 
 ### 暂停任务
 
@@ -184,7 +187,7 @@ Body：
 | retry | implementation | 76 | 根据构建日志修复 |
 | build | build | 80 | 安装依赖和生产构建 |
 | done | build | 88 | 构建完成 |
-| checkpointed | 指定步骤 | 88 | 单步成功，产物已保存 |
+| checkpointed | 指定步骤 | 88 | 单步成功或复用，产物已保存 |
 | deployment | deployment | 92 | 发布与健康检查 |
 | delivered | delivered | 100 | 三项 evidence 通过 |
 | failed | failed | 100 | 失败且无交付 URL |

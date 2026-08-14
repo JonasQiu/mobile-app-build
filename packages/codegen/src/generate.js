@@ -7,9 +7,12 @@ import { runBuild } from "./build.js";
 import { callLLM } from "./llm.js";
 import { runSpecWorkflow } from "./spec-workflow.js";
 import {
+  clearRepairState,
   loadSpecCheckpoint,
+  readRepairState,
   writeBuildLog,
   writeOutputCheckpoint,
+  writeRepairState,
   writeSpecCheckpoint,
 } from "./checkpoints.js";
 
@@ -31,6 +34,7 @@ export async function generate({
   signal,
   startStage = "mobile-spec",
   stopAfterStage = "build",
+  resume = true,
 }) {
   const progress = typeof onProgress === "function" ? onProgress : () => {};
   const startIndex = stageIndex(startStage);
@@ -48,6 +52,7 @@ export async function generate({
       model,
       onProgress: progress,
       signal,
+      resume,
     });
     if (!sw.ok) throw new Error(`Mobile Spec workflow failed: ${sw.reason || "workflow did not complete"}`);
     await writeSpecCheckpoint({ specWorkRoot, requirement, workflowResult: sw });
@@ -61,33 +66,135 @@ export async function generate({
   }
 
   if (startStage === "build") {
-    progress({ stage: "build", phase: "start", attempt: 1 });
-    const build = await runBuild(outDir, { signal });
-    await writeBuildLog(outDir, build.log);
-    if (build.ok) {
-      await writeOutputCheckpoint({ outDir, requirement, stage: "build" });
-      progress({ stage: "done", phase: "complete", attempt: 1 });
+    const savedRepair = resume ? await readRepairState({ outDir, requirement, stage: "build" }) : null;
+    let repairError = savedRepair?.error || "";
+    let attemptOffset = savedRepair?.attempts || 0;
+    let lastBuild = null;
+    let manifest = null;
+
+    if (!savedRepair) {
+      progress({ stage: "build", phase: "start", attempt: 1 });
+      lastBuild = await runBuild(outDir, { signal });
+      await writeBuildLog(outDir, lastBuild.log);
+      if (lastBuild.ok) {
+        await writeOutputCheckpoint({ outDir, requirement, stage: "build" });
+        await clearRepairState(outDir);
+        progress({ stage: "done", phase: "complete", attempt: 1 });
+        return {
+          ok: true,
+          outDir,
+          buildOk: true,
+          attempts: 1,
+          buildLog: lastBuild.log,
+          manifest: null,
+          specWorkflowOk: true,
+          completedStage: "build",
+        };
+      }
+      repairError = lastBuild.log;
+      attemptOffset = 1;
+      await writeRepairState({ outDir, requirement, stage: "build", error: repairError, attempts: attemptOffset });
+      progress({ stage: "retry", phase: "start", attempt: attemptOffset, buildOk: false });
+    } else {
+      progress({ stage: "retry", phase: "resume", attempt: attemptOffset, buildOk: false });
     }
+
+    copyTemplate(outDir);
+    let localAttempt = 0;
+    while (localAttempt < MAX_ATTEMPTS) {
+      localAttempt += 1;
+      const attempt = attemptOffset + localAttempt;
+      progress({ stage: "llm", phase: "start", attempt });
+      try {
+        manifest = await callLLM({
+          requirement,
+          attempt,
+          prevBuildError: repairError,
+          apiKey: openaiApiKey,
+          model,
+          specAnchor: sw.specMd,
+          proposalAnchor: sw.proposalMd,
+          designAnchor: sw.designMd,
+          tasksAnchor: sw.tasksMd,
+          signal,
+        });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        const reason = error instanceof Error ? error.message : String(error);
+        repairError = `SiteManifest validation failed while repairing build: ${reason}`;
+        await writeRepairState({ outDir, requirement, stage: "build", error: repairError, attempts: attempt });
+        progress({ stage: "retry", phase: "manifest", attempt, reason, buildOk: false });
+        continue;
+      }
+      progress({
+        stage: "llm",
+        phase: "complete",
+        attempt,
+        fileCount: Array.isArray(manifest.files) ? manifest.files.length : 0,
+        routeCount: Array.isArray(manifest.navRoutes) ? manifest.navRoutes.length : 0,
+      });
+      try {
+        progress({ stage: "write", phase: "start", attempt });
+        await writeManifest(outDir, manifest);
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        const reason = error instanceof Error ? error.message : String(error);
+        repairError = `Writing repaired SiteManifest failed: ${reason}`;
+        await writeRepairState({ outDir, requirement, stage: "build", error: repairError, attempts: attempt });
+        progress({ stage: "retry", phase: "manifest", attempt, reason, buildOk: false });
+        continue;
+      }
+      signal?.throwIfAborted();
+      await writeOutputCheckpoint({ outDir, requirement, stage: "implementation" });
+      progress({ stage: "write", phase: "complete", attempt, fileCount: Array.isArray(manifest.files) ? manifest.files.length : 0 });
+
+      progress({ stage: "build", phase: "start", attempt });
+      lastBuild = await runBuild(outDir, { signal });
+      await writeBuildLog(outDir, lastBuild.log);
+      if (lastBuild.ok) {
+        await writeOutputCheckpoint({ outDir, requirement, stage: "build" });
+        await clearRepairState(outDir);
+        progress({ stage: "done", phase: "complete", attempt });
+        return {
+          ok: true,
+          outDir,
+          buildOk: true,
+          attempts: attempt,
+          buildLog: lastBuild.log,
+          manifest,
+          specWorkflowOk: true,
+          completedStage: "build",
+        };
+      }
+      repairError = lastBuild.log;
+      await writeRepairState({ outDir, requirement, stage: "build", error: repairError, attempts: attempt });
+      progress({ stage: "retry", phase: "start", attempt, buildOk: false });
+    }
+
     return {
-      ok: build.ok,
+      ok: false,
       outDir,
-      buildOk: build.ok,
-      attempts: 1,
-      buildLog: build.log,
-      manifest: null,
+      buildOk: false,
+      attempts: attemptOffset + localAttempt,
+      buildLog: lastBuild?.log || repairError,
+      manifest,
       specWorkflowOk: true,
-      completedStage: build.ok ? "build" : "implementation",
+      completedStage: "implementation",
     };
   }
 
   copyTemplate(outDir);
-  let attempt = 0;
-  let prevBuildError = "";
+  const savedRepair = resume ? await readRepairState({ outDir, requirement, stage: "implementation" }) : null;
+  let localAttempt = 0;
+  let attempt = savedRepair?.attempts || 0;
+  let prevBuildError = savedRepair?.error || "";
+  let repairStage = "implementation";
   let manifest = null;
   let lastBuild = null;
 
-  while (attempt < MAX_ATTEMPTS) {
-    attempt += 1;
+  while (localAttempt < MAX_ATTEMPTS) {
+    localAttempt += 1;
+    attempt = (savedRepair?.attempts || 0) + localAttempt;
     progress({ stage: "llm", phase: "start", attempt });
     try {
       manifest = await callLLM({
@@ -106,8 +213,8 @@ export async function generate({
       if (signal?.aborted) throw error;
       const reason = error instanceof Error ? error.message : String(error);
       prevBuildError = `SiteManifest validation failed: ${reason}`;
+      await writeRepairState({ outDir, requirement, stage: repairStage, error: prevBuildError, attempts: attempt });
       progress({ stage: "retry", phase: "manifest", attempt, reason, buildOk: false });
-      if (attempt >= MAX_ATTEMPTS) throw new Error(`Codex output remained invalid after ${attempt} attempts: ${reason}`);
       continue;
     }
     progress({
@@ -119,12 +226,22 @@ export async function generate({
     });
 
     progress({ stage: "write", phase: "start", attempt });
-    await writeManifest(outDir, manifest);
+    try {
+      await writeManifest(outDir, manifest);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      prevBuildError = `Writing SiteManifest failed: ${reason}`;
+      await writeRepairState({ outDir, requirement, stage: repairStage, error: prevBuildError, attempts: attempt });
+      progress({ stage: "retry", phase: "manifest", attempt, reason, buildOk: false });
+      continue;
+    }
     signal?.throwIfAborted();
     await writeOutputCheckpoint({ outDir, requirement, stage: "implementation" });
     progress({ stage: "write", phase: "complete", attempt, fileCount: Array.isArray(manifest.files) ? manifest.files.length : 0 });
 
     if (stopAfterStage === "implementation") {
+      await clearRepairState(outDir);
       return {
         ok: true,
         outDir,
@@ -142,6 +259,7 @@ export async function generate({
     await writeBuildLog(outDir, lastBuild.log);
     if (lastBuild.ok) {
       await writeOutputCheckpoint({ outDir, requirement, stage: "build" });
+      await clearRepairState(outDir);
       progress({ stage: "done", phase: "complete", attempt });
       return {
         ok: true,
@@ -155,6 +273,8 @@ export async function generate({
       };
     }
     prevBuildError = lastBuild.log;
+    repairStage = "build";
+    await writeRepairState({ outDir, requirement, stage: "build", error: prevBuildError, attempts: attempt });
     progress({ stage: "retry", phase: "start", attempt, buildOk: false });
   }
 
@@ -163,7 +283,7 @@ export async function generate({
     outDir,
     buildOk: false,
     attempts: attempt,
-    buildLog: lastBuild?.log ?? "",
+    buildLog: lastBuild?.log || prevBuildError,
     manifest,
     specWorkflowOk: true,
     completedStage: "implementation",

@@ -10,7 +10,7 @@ import { generate } from "./src/generate.js";
 import {
   EXECUTION_STAGES,
   inspectCheckpoints,
-  invalidateOutputAfter,
+  readDeploymentEvidence,
   readStageArtifacts,
   writeDeploymentEvidence,
   writeOutputCheckpoint,
@@ -112,6 +112,9 @@ function reportProgress(projectId, event, jobId) {
     } else {
       message = `生产构建未通过，Codex 将读取真实构建日志并开始第 ${Number(event.attempt) + 1} 次修复`;
     }
+  } else if (event.phase === "reused" && eventStage.startsWith("spec-")) {
+    const label = { "spec-propose": "Proposal 与页面规格", "spec-design": "Design 与设计评审", "spec-task": "任务拆解" }[eventStage] || eventStage;
+    message = `${label}已通过，复用子阶段检查点，不重新生成`;
   }
   updateJob(projectId, { status: "running", stage, progress, kind: event.ok === false ? "warning" : "progress" }, message);
 }
@@ -222,11 +225,51 @@ function stopPreview(slug) {
 }
 
 function nextIncompleteStage(checkpoints) {
-  return EXECUTION_STAGES.find((stage) => !checkpoints.includes(stage)) || "deployment";
+  return EXECUTION_STAGES.find((stage) => !checkpoints.includes(stage)) || null;
 }
 
 function stageLabel(stage) {
   return { "mobile-spec": "规格", implementation: "实现", build: "构建", deployment: "部署" }[stage] || stage;
+}
+
+function validPublicUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" && url.hostname !== "localhost" && !url.pathname.startsWith("/preview");
+  } catch {
+    return false;
+  }
+}
+
+async function finishReusedJob(job, { outDir, checkpoints, completedStage, signal }) {
+  const stored = checkpoints.includes("deployment") ? await readDeploymentEvidence(outDir) : null;
+  const url = validPublicUrl(job.previousDeliveryUrl)
+    ? job.previousDeliveryUrl
+    : validPublicUrl(stored?.url) ? stored.url : "";
+  const evidence = stored?.evidence;
+  if (url && evidence?.mobileSpecPassed && evidence.buildPassed && evidence.deployPassed) {
+    await callback(job.callbackUrl, { status: "delivered", stage: "delivered", url, evidence }, signal);
+    if (jobs.get(job.projectId)?.id !== job.id) return;
+    updateJob(job.projectId, {
+      id: job.id,
+      status: "delivered",
+      stage: "delivered",
+      progress: 100,
+      url,
+      evidence,
+      checkpoints,
+    }, `“${stageLabel(completedStage)}”已成功，复用检查点和现有交付链接，不重新执行`);
+    return;
+  }
+  await callback(job.callbackUrl, { status: "checkpointed", stage: completedStage }, signal);
+  if (jobs.get(job.projectId)?.id !== job.id) return;
+  updateJob(job.projectId, {
+    id: job.id,
+    status: "checkpointed",
+    stage: completedStage,
+    progress: PROGRESS.checkpointed[0],
+    checkpoints,
+  }, `“${stageLabel(completedStage)}”已成功，直接复用检查点，不重新执行`);
 }
 
 async function executeJob(job, controller) {
@@ -240,7 +283,7 @@ async function executeJob(job, controller) {
     let checkpoints = await inspectCheckpoints({ outDir, specWorkRoot, requirement: job.requirement });
     let startStage = null;
     let stopAfterStage = "build";
-    let shouldDeploy = job.mode !== "step" || job.targetStage === "deployment";
+    const shouldDeploy = job.mode !== "step" || job.targetStage === "deployment";
 
     if (job.mode === "rerun") {
       stopPreview(slug);
@@ -251,46 +294,41 @@ async function executeJob(job, controller) {
       updateJob(job.projectId, { id: job.id, status: "running", stage: "mobile-spec", progress: 7, checkpoints }, "已清除旧检查点，正在从 Mobile Spec 重新执行完整流程");
     } else if (job.mode === "step") {
       const target = job.targetStage;
+      if (checkpoints.includes(target)) {
+        await finishReusedJob(job, { outDir, checkpoints, completedStage: target, signal });
+        return;
+      }
       stopPreview(slug);
       if (target === "mobile-spec") {
-        await rm(outDir, { recursive: true, force: true });
-        await rm(specWorkRoot, { recursive: true, force: true });
-        checkpoints = [];
         startStage = "mobile-spec";
         stopAfterStage = "mobile-spec";
       } else if (target === "implementation") {
         if (!checkpoints.includes("mobile-spec")) throw new Error("执行实现前需要成功的 Mobile Spec 检查点");
-        await rm(outDir, { recursive: true, force: true });
-        checkpoints = ["mobile-spec"];
         startStage = "implementation";
         stopAfterStage = "implementation";
       } else if (target === "build") {
         if (!checkpoints.includes("implementation")) throw new Error("执行构建前需要成功的实现检查点");
-        await rm(join(outDir, ".next"), { recursive: true, force: true });
-        await invalidateOutputAfter({ outDir, requirement: job.requirement, stage: "implementation" });
-        checkpoints = checkpoints.filter((stage) => ["mobile-spec", "implementation"].includes(stage));
         startStage = "build";
         stopAfterStage = "build";
       } else if (target === "deployment") {
         if (!checkpoints.includes("build")) throw new Error("执行部署前需要成功的生产构建检查点");
-        await invalidateOutputAfter({ outDir, requirement: job.requirement, stage: "build" });
-        checkpoints = checkpoints.filter((stage) => stage !== "deployment");
       }
       const progress = { "mobile-spec": 7, implementation: 58, build: 76, deployment: 90 }[target] || 7;
       updateJob(job.projectId, { id: job.id, status: "running", stage: target, progress, checkpoints }, `Runner 已接收“${stageLabel(target)}”单步任务`);
     } else {
       const nextStage = nextIncompleteStage(checkpoints);
+      if (!nextStage) {
+        await finishReusedJob(job, { outDir, checkpoints, completedStage: "deployment", signal });
+        return;
+      }
       if (checkpoints.length) {
         for (const stage of checkpoints.filter((item) => item !== "deployment")) {
           updateJob(job.projectId, { id: job.id, status: "running", stage: nextStage, checkpoints }, `已复用“${stageLabel(stage)}”成功检查点，不重复执行`);
         }
       }
       if (nextStage === "mobile-spec") {
-        await rm(outDir, { recursive: true, force: true });
-        await rm(specWorkRoot, { recursive: true, force: true });
         startStage = "mobile-spec";
       } else if (nextStage === "implementation") {
-        await rm(outDir, { recursive: true, force: true });
         startStage = "implementation";
       } else if (nextStage === "build") {
         startStage = "build";
@@ -313,9 +351,13 @@ async function executeJob(job, controller) {
         signal,
         startStage,
         stopAfterStage,
+        resume: job.mode !== "rerun",
       }), GENERATION_TIMEOUT_MS, "generation");
       throwIfPaused(signal);
-      if (!result.ok) throw new Error(`build failed after ${result.attempts} attempts`);
+      if (!result.ok) {
+        const detail = String(result.buildLog || "").trim().slice(-600);
+        throw new Error(`失败步骤在 ${result.attempts} 次修复后仍未通过${detail ? `：${detail}` : ""}`);
+      }
       checkpoints = await inspectCheckpoints({ outDir, specWorkRoot, requirement: job.requirement });
     }
 
@@ -533,6 +575,7 @@ const server = createServer(async (req, res) => {
   const requestedMode = body?.forceRerun === true ? "rerun" : String(body?.mode || "continue");
   const mode = ["continue", "rerun", "step"].includes(requestedMode) ? requestedMode : "";
   const targetStage = typeof body?.targetStage === "string" ? body.targetStage : null;
+  const previousDeliveryUrl = typeof body?.previousDeliveryUrl === "string" ? body.previousDeliveryUrl : "";
   if (!projectId || !requirement || !callbackUrl.startsWith("https://")) {
     send(res, 400, { error: "projectId, requirement, and HTTPS callbackUrl are required" });
     return;
@@ -557,6 +600,7 @@ const server = createServer(async (req, res) => {
     callbackUrl,
     mode,
     targetStage,
+    previousDeliveryUrl,
   };
   jobs.delete(projectId);
   updateJob(projectId, {

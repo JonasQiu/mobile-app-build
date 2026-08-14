@@ -5,11 +5,14 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  clearRepairState,
   inspectCheckpoints,
+  readRepairState,
   readStageArtifacts,
   writeBuildLog,
   writeDeploymentEvidence,
   writeOutputCheckpoint,
+  writeRepairState,
   writeSpecCheckpoint,
 } from "../src/checkpoints.js";
 
@@ -97,6 +100,29 @@ test("legacy successful workspaces are migrated without rebuilding", async () =>
     const artifacts = await readStageArtifacts({ outDir, specWorkRoot, requirement, stage: "mobile-spec" });
     assert.equal(artifacts.checkpointed, true);
     assert.equal(artifacts.artifacts[1].content, "# Spec");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("failed-step repair context is requirement and stage scoped until cleared", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mobile-build-repair-state-"));
+  const requirement = "做一个预约网站";
+  try {
+    await writeRepairState({
+      outDir: root,
+      requirement,
+      stage: "build",
+      error: "Manifest contains duplicate routes: /records, /records",
+      attempts: 3,
+    });
+    const state = await readRepairState({ outDir: root, requirement, stage: "build" });
+    assert.equal(state?.attempts, 3);
+    assert.match(state?.error || "", /duplicate routes/);
+    assert.equal(await readRepairState({ outDir: root, requirement, stage: "implementation" }), null);
+    assert.equal(await readRepairState({ outDir: root, requirement: "另一个需求", stage: "build" }), null);
+    await clearRepairState(root);
+    assert.equal(await readRepairState({ outDir: root, requirement, stage: "build" }), null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
