@@ -22,36 +22,60 @@ function promptFor(messages, name) {
   ].join("\n\n");
 }
 
-function run(command, args, { cwd, input, timeoutMs }) {
+function run(command, args, { cwd, input, timeoutMs, signal }) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, {
       cwd,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      detached: process.platform !== "win32",
     });
     const stdout = [];
     const stderr = [];
     let settled = false;
+    let killTimer;
+    const stopChild = (killSignal) => {
+      try {
+        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, killSignal);
+        else child.kill(killSignal);
+      } catch {
+        try { child.kill(killSignal); } catch { /* already dead */ }
+      }
+    };
     const finish = (fn, value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(killTimer);
+      signal?.removeEventListener("abort", onAbort);
       fn(value);
     };
+    const onAbort = () => {
+      stopChild("SIGTERM");
+      const error = signal?.reason instanceof Error ? signal.reason : new DOMException("execution paused", "AbortError");
+      finish(rejectRun, error);
+      killTimer = setTimeout(() => stopChild("SIGKILL"), 1500);
+      killTimer.unref?.();
+    };
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      stopChild("SIGKILL");
       finish(rejectRun, new Error(`Codex generation timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     child.stdout.on("data", (chunk) => stdout.push(chunk));
     child.stderr.on("data", (chunk) => stderr.push(chunk));
     child.on("error", (error) => finish(rejectRun, error));
-    child.on("close", (code) => finish(resolveRun, {
-      code,
-      stdout: Buffer.concat(stdout).toString("utf8"),
-      stderr: Buffer.concat(stderr).toString("utf8"),
-    }));
+    child.on("close", (code) => {
+      clearTimeout(killTimer);
+      finish(resolveRun, {
+        code,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      });
+    });
     child.stdin.end(input);
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -59,7 +83,7 @@ export function hasCodexProvider() {
   return Boolean(process.env.CODEX_BIN);
 }
 
-export async function callCodexStructured({ schema, name, messages }) {
+export async function callCodexStructured({ schema, name, messages, signal }) {
   const format = zodResponseFormat(schema, name);
   const scratch = await mkdtemp(join(tmpdir(), "mobile-build-codex-"));
   const schemaPath = join(scratch, `${name}.schema.json`);
@@ -81,6 +105,7 @@ export async function callCodexStructured({ schema, name, messages }) {
       cwd: resolve(process.env.CODEX_WORKDIR || process.cwd()),
       input: promptFor(messages, name),
       timeoutMs: Number(process.env.CODEX_CALL_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS,
+      signal,
     });
     if (result.code !== 0) {
       const detail = result.stderr.trim().split("\n").slice(-8).join("\n");

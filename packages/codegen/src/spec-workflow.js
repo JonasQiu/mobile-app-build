@@ -56,8 +56,8 @@ export async function createSpecWorkspace({ workRoot, requirement, change }) {
 // stdout EVEN WHEN the exit code is 1 (cmdWorkflow sets exitCode on ok:false),
 // so we parse stdout regardless of exit code — that's how gate errors reach the
 // retry loop.
-export function runMobileSpec(args, { cwd, env, timeoutMs = 60_000 } = {}) {
-  return new Promise((resolveP) => {
+export function runMobileSpec(args, { cwd, env, timeoutMs = 60_000, signal } = {}) {
+  return new Promise((resolveP, rejectP) => {
     const child = spawn(process.execPath, [MOBILE_SPEC_BIN, ...args], {
       cwd,
       env,
@@ -66,6 +66,22 @@ export function runMobileSpec(args, { cwd, env, timeoutMs = 60_000 } = {}) {
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    let killTimer;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      fn(value);
+    };
+    const onAbort = () => {
+      child.kill("SIGTERM");
+      const error = signal?.reason instanceof Error ? signal.reason : new DOMException("execution paused", "AbortError");
+      finish(rejectP, error);
+      killTimer = setTimeout(() => child.kill("SIGKILL"), 1500);
+      killTimer.unref();
+    };
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
     });
@@ -78,18 +94,19 @@ export function runMobileSpec(args, { cwd, env, timeoutMs = 60_000 } = {}) {
       } catch {
         /* already dead */
       }
-      resolveP({ ok: false, json: null, exitCode: null, stdout, stderr, timedOut: true });
+      finish(resolveP, { ok: false, json: null, exitCode: null, stdout, stderr, timedOut: true });
     }, timeoutMs);
     child.on("error", () => {
-      clearTimeout(timer);
-      resolveP({ ok: false, json: null, exitCode: null, stdout, stderr });
+      finish(resolveP, { ok: false, json: null, exitCode: null, stdout, stderr });
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      clearTimeout(killTimer);
       const json = parseJsonLoose(stdout);
       const hookOk = json && json.ok !== false;
-      resolveP({ ok: code === 0 && hookOk, json, exitCode: code, stdout, stderr });
+      finish(resolveP, { ok: code === 0 && hookOk, json, exitCode: code, stdout, stderr });
     });
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -142,8 +159,8 @@ function gateMessages(check) {
 // artifacts, writes them into specWorkspace, and RETURNS the node/file pairs it
 // produced (as [{node, relPath}]) — necessary for the propose stage, whose spec
 // path depends on pageSpecId which is only known after authoring.
-async function runStage(specWorkspace, env, change, stageId, authorAndWrite, onProgress, maxRetries = 2) {
-  const ms = (args) => runMobileSpec(args, { cwd: specWorkspace, env });
+async function runStage(specWorkspace, env, change, stageId, authorAndWrite, onProgress, signal, maxRetries = 2) {
+  const ms = (args) => runMobileSpec(args, { cwd: specWorkspace, env, signal });
   const maxAttempts = maxRetries + 1;
 
   const preStage = await ms(hookArgs("preStage", change, ["--stage", stageId]));
@@ -156,6 +173,7 @@ async function runStage(specWorkspace, env, change, stageId, authorAndWrite, onP
   let check = null;
   while (attempt < maxAttempts) {
     attempt += 1;
+    signal?.throwIfAborted();
     const nodes = await authorAndWrite(attempt, prevGateError);
     let nodeFailure = "";
     for (const { node, relPath } of nodes) {
@@ -190,18 +208,21 @@ export async function runSpecWorkflow({
   onProgress,
   change,
   maxRetriesPerStage = 2,
+  signal,
 }) {
   const progress = typeof onProgress === "function" ? onProgress : () => {};
   if (!existsSync(MOBILE_SPEC_BIN)) {
     return { ok: false, reason: `mobile-spec bin not found at ${MOBILE_SPEC_BIN}` };
   }
   const changeName = change || slugify(requirement);
+  signal?.throwIfAborted();
   await rm(workRoot, { recursive: true, force: true });
+  signal?.throwIfAborted();
   await createSpecWorkspace({ workRoot, requirement, change: changeName });
   const specWorkspace = workRoot;
   const env = mobileSpecEnv(specWorkspace);
 
-  const ms = (args) => runMobileSpec(args, { cwd: specWorkspace, env });
+  const ms = (args) => runMobileSpec(args, { cwd: specWorkspace, env, signal });
   const reqFile = `requirements/${changeName}.md`;
 
   // --- bootstrap: validate + ingest the requirement source ---
@@ -234,7 +255,7 @@ export async function runSpecWorkflow({
     changeName,
     "propose",
     async () => {
-      const authored = await authorProposal({ requirement, apiKey, model });
+      const authored = await authorProposal({ requirement, apiKey, model, signal });
       pageSpecId = authored.pageSpecId || pageSpecId;
       proposalMd = authored.proposalMd;
       specMd = authored.specMd;
@@ -248,6 +269,7 @@ export async function runSpecWorkflow({
       ];
     },
     progress,
+    signal,
     maxRetriesPerStage,
   );
   stageResults.propose = propose;
@@ -263,7 +285,7 @@ export async function runSpecWorkflow({
     changeName,
     "design",
     async () => {
-      const authored = await authorDesign({ requirement, proposalMd, specMd, apiKey, model });
+      const authored = await authorDesign({ requirement, proposalMd, specMd, apiKey, model, signal });
       designMd = authored.designMd;
       reviewMd = authored.reviewMd;
       const designPath = `openspec/changes/${changeName}/design.md`;
@@ -276,6 +298,7 @@ export async function runSpecWorkflow({
       ];
     },
     progress,
+    signal,
     maxRetriesPerStage,
   );
   stageResults.design = design;
@@ -300,6 +323,7 @@ export async function runSpecWorkflow({
         model,
         attempt,
         prevGateError,
+        signal,
       });
       tasksMd = authored.tasksMd;
       const tasksPath = `openspec/changes/${changeName}/tasks.md`;
@@ -307,6 +331,7 @@ export async function runSpecWorkflow({
       return [{ node: "task", relPath: tasksPath }];
     },
     progress,
+    signal,
     maxRetriesPerStage,
   );
   stageResults.task = task;

@@ -16,11 +16,12 @@ function yes(source, pattern) {
   return pattern.test(source) ? "已实现" : "未检测到";
 }
 
-const [app, projects, projectDelete, jobs, runner, generate, manifest, serverAuth] = await Promise.all([
+const [app, projects, projectDelete, jobs, pause, runner, generate, manifest, serverAuth] = await Promise.all([
   text("apps/web/app/MobileBuildApp.tsx"),
   text("apps/web/app/api/projects/route.ts"),
   text("apps/web/app/api/projects/[projectId]/route.ts"),
   text("apps/web/app/api/v1/projects/[projectId]/jobs/route.ts"),
+  text("apps/web/app/api/v1/projects/[projectId]/pause/route.ts"),
   text("packages/codegen/runner.mjs"),
   text("packages/codegen/src/generate.js"),
   text("packages/codegen/src/manifest-schema.js"),
@@ -34,16 +35,17 @@ const facts = [
   ["Codex 详细事件", yes(runner, /Codex 已返回结构化实现/), "生成、文件校验、写入、构建修复与部署消息"],
   ["历史记录删除", yes(projectDelete, /export async function DELETE/), "按用户隔离，进行中任务拒绝删除"],
   ["并发执行上限", yes(jobs, /MAX_ACTIVE_PROJECTS = 2/), "服务端原子占位，每个用户最多两个进行中项目"],
+  ["暂停与重新执行", yes(app + pause + runner, /暂停执行[\s\S]*status = 'paused'[\s\S]*jobControllers/), "Runner 中断当前子进程；暂停、失败和已交付项目可从头重新执行"],
   ["可信状态同步", yes(projects, /executionEvents/), "控制站服务端轮询 Runner，不接受浏览器终态"],
   ["受信任派发", yes(jobs, /CODEX_RUNNER_TOKEN/), "服务端 Bearer token 派发"],
-  ["Runner message 流", yes(runner, /function reportProgress\(projectId, event\)/), "progress/message/events，最近 24 条"],
+  ["Runner message 流", yes(runner, /function reportProgress\(projectId, event, jobId\)/), "progress/message/events，最近 24 条"],
   ["Mobile Spec 硬门禁", yes(generate, /Mobile Spec workflow is required/), "缺少或失败时停止生成"],
   ["交付 evidence", yes(runner, /mobileSpecPassed: true[\s\S]*buildPassed: true[\s\S]*deployPassed: true/), "三项证据齐全才 delivered"],
   ["生成文件安全", yes(manifest, /validateManifest/), "路径、路由、必需文件、外部字体约束"],
   ["D1 persistence", yes(serverAuth, /env\.DB/), "项目、会话与历史记录持久化"],
 ];
 
-const sources = [app, projects, projectDelete, jobs, runner, generate, manifest, serverAuth].join("\n");
+const sources = [app, projects, projectDelete, jobs, pause, runner, generate, manifest, serverAuth].join("\n");
 const digest = createHash("sha256").update(sources).digest("hex").slice(0, 16);
 const body = `# 实现状态快照
 
@@ -61,7 +63,7 @@ ${facts.map(([name, status, detail]) => `| ${name} | ${status} | ${detail} |`).j
 
 - Runner job/message/events 当前为内存状态，不具备重启恢复。
 - Cloudflare Quick Tunnel 只用于开发与验收，不是生产 DeploymentProvider。
-- Desktop Agent、持久 checkpoint、源码 ZIP、取消/暂停当前未实现。
+- Desktop Agent、持久 checkpoint、源码 ZIP、取消与断点继续当前未实现。
 - 浏览器无权写入 delivered 或部署 URL。
 `;
 

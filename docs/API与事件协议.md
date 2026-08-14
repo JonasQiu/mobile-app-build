@@ -26,7 +26,7 @@ flowchart LR
 |---|---|---|
 | 浏览器 → 控制面 | HttpOnly Cookie | 15 秒轮询 `GET /api/projects` 获取进度 |
 | 控制面 → D1 | Worker binding | `env.DB` 直连，不走网络 |
-| 控制面 → Runner | `CODEX_RUNNER_URL` + `CODEX_RUNNER_TOKEN` | 派发 `POST /jobs`、拉取 `GET /jobs/{projectId}` |
+| 控制面 → Runner | `CODEX_RUNNER_URL` + `CODEX_RUNNER_TOKEN` | 派发 `POST /jobs`、暂停 `POST /jobs/{projectId}/pause`、拉取 `GET /jobs/{projectId}` |
 | Runner → 控制面 | `RUNNER_CALLBACK_TOKEN` | 交付结果回调 `/api/v1/projects/{id}/delivery` |
 
 三个环境变量（`CODEX_RUNNER_URL` / `CODEX_RUNNER_TOKEN` / `RUNNER_CALLBACK_TOKEN`）任一缺失时派发路由直接返回 `503 EXECUTOR_OFFLINE`，不会伪造任务。Runner token 永不下发给浏览器。
@@ -43,6 +43,7 @@ flowchart LR
 | `DELETE` | `/api/projects/{projectId}` | 删除当前用户的非进行中历史项目 |
 | `PATCH` | `/api/projects` | 始终返回 `403`，禁止浏览器伪造终态 |
 | `POST` | `/api/v1/projects/{projectId}/jobs` | 服务端派发受信任 Runner |
+| `POST` | `/api/v1/projects/{projectId}/pause` | 校验项目所有权并要求 Runner 真实暂停 |
 | `POST` | `/api/v1/projects/{projectId}/delivery` | 兼容 Runner 回调，需要 callback token |
 | `GET` | `/api/v1/projects/{projectId}/delivery` | 受信任 Runner 或 Sites owner 读取项目需求 |
 
@@ -69,7 +70,7 @@ flowchart LR
 
 当用户已有 2 个 `dispatching/building` 项目时，`POST /api/projects` 和 jobs 派发返回 `409 EXECUTION_LIMIT_REACHED`。jobs 路由使用单条条件 UPDATE 原子占用名额，防止并发请求绕过计数。
 
-`DELETE /api/projects/{projectId}` 只删除当前用户拥有的记录；`dispatching/building` 项目返回 409，避免 Runner 继续执行但控制面记录消失。
+`DELETE /api/projects/{projectId}` 只删除当前用户拥有的记录；`dispatching/building` 项目返回 409，避免 Runner 继续执行但控制面记录消失。`paused` 不占执行名额，可删除或重新执行。
 
 ## 4. Runner API（当前实现）
 
@@ -102,11 +103,12 @@ Body：
   "projectId": "prj_...",
   "requirement": "完整原始需求",
   "instructions": "服务端执行约束",
-  "callbackUrl": "https://control.example/api/v1/projects/prj_.../delivery"
+  "callbackUrl": "https://control.example/api/v1/projects/prj_.../delivery",
+  "forceRerun": false
 }
 ```
 
-返回 `202` 与异步 job；相同 `projectId` 正在运行时返回现有 job。
+返回 `202` 与异步 job；相同 `projectId` 正在运行时返回现有 job。暂停、失败或已交付项目由控制面发送 `forceRerun: true`，Runner 创建新 job、清理旧部署引用并从 Mobile Spec 开始执行。
 
 控制站只在收到 JSON 响应且 `job.id` 存在时把项目更新为 `building`。Runner 拒绝请求、返回非 JSON 或缺少任务编号时释放本次派发占位，并返回可诊断的错误码与 HTTP 状态。
 
@@ -147,6 +149,12 @@ Body：
 ```
 
 失败包含 `status: "failed"`、`stage: "failed"` 和裁剪后的 `error`。
+
+### 暂停任务
+
+`POST /jobs/{projectId}/pause`
+
+需要 Runner Bearer token。只有 `queued/running` job 可暂停；Runner 立即把 job 标记为 `paused`，同时通过 `AbortController` 中断当前 Mobile Spec、Codex/OpenAI 调用、依赖安装、生产构建、临时部署或健康检查，并回调控制面写入 `paused`。重复暂停幂等返回 `202`；不存在或已进入其他终态时返回 `404/409`。
 
 ## 5. 进度与 message 映射
 

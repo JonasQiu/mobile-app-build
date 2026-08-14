@@ -1,6 +1,6 @@
 import { getD1, jsonError, requireSession } from "../../../../../lib/server-auth";
 
-type ProjectRow = { id: string; status: string; prompt: string; currentStage: string | null };
+type ProjectRow = { id: string; status: string; prompt: string; currentStage: string | null; previewUrl: string | null };
 
 const MAX_ACTIVE_PROJECTS = 2;
 const RUNNER_REQUEST_TIMEOUT_MS = 10_000;
@@ -34,11 +34,9 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
   const user = await requireSession(request);
   if (!user) return jsonError("未登录", 401);
   const { projectId } = await context.params;
-  const project = await getD1().prepare(`SELECT id, status, prompt, current_stage AS currentStage FROM projects
+  const project = await getD1().prepare(`SELECT id, status, prompt, current_stage AS currentStage, preview_url AS previewUrl FROM projects
     WHERE id = ? AND owner_user_id = ? LIMIT 1`).bind(projectId, user.id).first<ProjectRow>();
   if (!project) return jsonError("项目不存在", 404);
-  if (project.status === "delivered") return jsonError("项目已经交付", 409);
-
   const endpoint = process.env.CODEX_RUNNER_URL;
   const token = process.env.CODEX_RUNNER_TOKEN;
   if (!endpoint || !token || !process.env.RUNNER_CALLBACK_TOKEN) {
@@ -100,9 +98,9 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
 
   const releaseClaim = async () => {
     if (!claimedSlot) return;
-    await getD1().prepare(`UPDATE projects SET status = ?, current_stage = ?, updated_at = CURRENT_TIMESTAMP
+    await getD1().prepare(`UPDATE projects SET status = ?, current_stage = ?, preview_url = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND owner_user_id = ? AND status = 'dispatching'`)
-      .bind(project.status, project.currentStage, project.id, user.id).run();
+      .bind(project.status, project.currentStage, project.previewUrl, project.id, user.id).run();
   };
 
   const idempotencyKey = request.headers.get("idempotency-key") || `job-${project.id}`;
@@ -124,7 +122,13 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
         "content-type": "application/json",
         "idempotency-key": idempotencyKey,
       },
-      body: JSON.stringify({ projectId: project.id, requirement: project.prompt, instructions: prompt, callbackUrl }),
+      body: JSON.stringify({
+        projectId: project.id,
+        requirement: project.prompt,
+        instructions: prompt,
+        callbackUrl,
+        forceRerun: ["paused", "failed", "delivered"].includes(project.status),
+      }),
     });
   } catch (error) {
     return Response.json({

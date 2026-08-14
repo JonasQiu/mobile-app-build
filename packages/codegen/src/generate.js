@@ -21,6 +21,7 @@ export async function generate({
   model,
   onProgress,
   specWorkRoot,
+  signal,
 }) {
   const progress = typeof onProgress === "function" ? onProgress : () => {};
 
@@ -40,6 +41,7 @@ export async function generate({
     apiKey: openaiApiKey,
     model,
     onProgress: progress,
+    signal,
   });
   if (!sw.ok) throw new Error(`Mobile Spec workflow failed: ${sw.reason || "workflow did not complete"}`);
   specWorkflowOk = true;
@@ -69,6 +71,7 @@ export async function generate({
       proposalAnchor,
       designAnchor,
       tasksAnchor,
+      signal,
     });
     progress({
       stage: "llm",
@@ -80,10 +83,11 @@ export async function generate({
 
     progress({ stage: "write", phase: "start", attempt });
     await writeManifest(outDir, manifest);
+    signal?.throwIfAborted();
     progress({ stage: "write", phase: "complete", attempt, fileCount: Array.isArray(manifest.files) ? manifest.files.length : 0 });
 
     progress({ stage: "build", phase: "start", attempt });
-    lastBuild = await runBuild(outDir);
+    lastBuild = await runBuild(outDir, { signal });
     if (lastBuild.ok) {
       progress({ stage: "done", phase: "complete", attempt });
       return {

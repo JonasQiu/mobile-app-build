@@ -102,3 +102,18 @@ test("two workspaces get isolated sidecar state via MOBILE_SPEC_HOME_OVERRIDE", 
     await rm(w2, { recursive: true, force: true });
   }
 });
+
+test("runMobileSpec rejects immediately when the job is paused", async () => {
+  const root = tmpRoot();
+  await mkdir(root, { recursive: true });
+  const controller = new AbortController();
+  controller.abort(new DOMException("execution paused", "AbortError"));
+  try {
+    await assert.rejects(
+      runMobileSpec(["--help"], { cwd: root, env: mobileSpecEnv(root), signal: controller.signal }),
+      (error) => error?.name === "AbortError",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

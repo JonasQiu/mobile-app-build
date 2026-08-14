@@ -15,6 +15,8 @@ Runner 必须运行在具备文件系统、子进程和外网能力的独立环�
 7. 由 DeploymentProvider 发布，使用外部 HTTPS URL 做健康检查。
 8. 仅当三项 evidence 为真时返回 `delivered`。
 
+运行中的 job 可通过受鉴权的暂停接口中断；Runner 会把中断信号传递到 Mobile Spec、Codex/OpenAI、npm、构建、隧道和健康检查。暂停、失败或已交付项目再次派发时使用新 job，并从头执行。
+
 不存在 Mobile Spec 跳过、业务主题示例兜底、localhost 交付或站内假预览。
 
 ## Runner API
@@ -22,6 +24,7 @@ Runner 必须运行在具备文件系统、子进程和外网能力的独立环�
 - `GET /health`：Provider 和部署配置健康状态。
 - `POST /jobs`：提交异步任务，需要 Bearer token。
 - `GET /jobs/{projectId}`：读取 `status`、`stage`、`progress`、`message`、最近 `events`、错误或交付证据。
+- `POST /jobs/{projectId}/pause`：暂停 `queued/running` job，幂等返回 `paused`。
 
 状态中的事件只保留最近 24 条且当前为内存数据；Codex 生成、结构化结果、文件校验写入、构建修复与部署节点都有明确 message。正式 Cloud Runner 应持久化到控制面事件库。
 

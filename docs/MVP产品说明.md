@@ -14,6 +14,8 @@ flowchart TD
   B --> C[保存项目]
   C --> D[派发受信任 Runner]
   D --> E[Mobile Spec 门禁]
+  D -->|用户暂停| L[paused]
+  L -->|重新执行| D
   E --> F[Codex 实现]
   F --> G[npm ci 与生产构建]
   G -->|失败且可修复| F
@@ -23,7 +25,7 @@ flowchart TD
   J --> K[历史详情中打开页面]
 ```
 
-执行页展示六个阶段：需求、Mobile Spec、Codex、构建、部署、完成。执行中每 15 秒同步百分比、当前 message 和最近事件，包含 Codex 生成、文件校验写入、构建修复，以及公网健康检查每次探测的 HTTP 或网络结果。历史项目可点击恢复同一详情视图，非进行中记录允许删除。
+执行页展示六个阶段：需求、Mobile Spec、Codex、构建、部署、完成。执行中每 15 秒同步百分比、当前 message 和最近事件，包含 Codex 生成、文件校验写入、构建修复，以及公网健康检查每次探测的 HTTP 或网络结果。运行中可真实暂停；暂停、失败和已交付项目可重新执行。历史项目可点击恢复同一详情视图，非进行中记录允许删除。
 
 ## 3. 已实现范围
 
@@ -36,6 +38,7 @@ flowchart TD
 - 可复现依赖安装、生产构建、失败日志修复。
 - Runner 实时 progress/message/events 与历史项目详情。
 - 每个用户最多同时执行 2 个需求；服务端原子占位并拒绝第三个任务。
+- Runner 协作式暂停、子进程终止和从头重新执行；暂停任务立即释放执行名额。
 - 外部 HTTPS URL 检查与三项交付 evidence。
 
 ## 4. 验收实现与生产边界
@@ -52,7 +55,7 @@ flowchart TD
 ## 5. 尚未实现
 
 - 持久 job、attempt、event、checkpoint 和 artifact store。
-- 取消、暂停、断点继续、Runner lease 与故障转移。
+- 取消、断点继续、Runner lease 与故障转移。
 - 源码 ZIP、不可变 checkpoint 和继续修改。
 - 正式 Cloud Runner 与持久 DeploymentProvider。
 - 邀请制多用户、配额、计费、审计查询和数据删除。
@@ -64,9 +67,9 @@ flowchart TD
 
 `queued → dispatching → building → delivered`
 
-失败终态：`failed`。`currentStage` 使用：
+可重新执行终态：`paused`、`failed`、`delivered`。`currentStage` 使用：
 
-`requirement | mobile-spec | implementation | build | deployment | delivered | failed`
+`requirement | mobile-spec | implementation | build | deployment | paused | delivered | failed`
 
 `dispatching` 是控制站已原子占用并发名额、正在等待 Runner 接受任务的短暂状态；Runner 确认后进入 `building`，明确拒绝时回到原状态，响应未知超过 2 分钟则失败并释放名额。
 
@@ -78,10 +81,11 @@ flowchart TD
 - 公网健康检查返回非 5xx。
 - 临时隧道必须完成连接注册；健康检查在总时限内重试 DNS、连接与 5xx，并在最终失败时回收预览和隧道进程。
 - 同一项目仅在部署或健康检查失败时，可校验原始需求与生产构建 checkpoint 后直接继续部署，避免重复执行 Codex 和构建。
+- 用户主动“重新执行”不会复用上述部署 checkpoint，而是清除旧交付状态并从 Mobile Spec 开始新 job。
 - Runner 返回 `mobileSpecPassed`、`buildPassed`、`deployPassed` 三项证据。
 
 ## 7. 当前验收场景
 
 至少覆盖：记账网站、活动报名页、团队看板和从未预设过的新业务网站。每条需求必须验证内容匹配、门禁、生产构建、外部 URL 和 HTTP 结果；失败用例必须确认没有交付 URL。
 
-生产化验收还需增加 Runner 重启恢复、断网重连、并发幂等、部署 Provider 半成功、取消和 Secret 泄漏测试。
+生产化验收还需增加 Runner 重启恢复、断网重连、并发幂等、部署 Provider 半成功、取消、暂停竞态和 Secret 泄漏测试。

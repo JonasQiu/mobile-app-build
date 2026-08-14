@@ -545,6 +545,17 @@ button {
   color: var(--danger);
 }
 
+.plan-head .version-pill.paused {
+  background: rgba(255,190,92,.08);
+  border-color: rgba(255,190,92,.2);
+  color: #ffbe5c;
+}
+
+.pause-button {
+  background: #ffbe5c;
+  color: #1c160b;
+}
+
 .live-progress {
   background: rgba(255,255,255,.07);
   border-radius: 999px;

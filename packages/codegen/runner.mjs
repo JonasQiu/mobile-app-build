@@ -32,6 +32,8 @@ const DEPLOYMENT_HEALTH_TIMEOUT_MS = Math.max(30_000, Number(process.env.CODEGEN
 const RUNNER_TOKEN = process.env.CODEX_RUNNER_TOKEN || "";
 const CALLBACK_TOKEN = process.env.RUNNER_CALLBACK_TOKEN || "";
 const jobs = new Map();
+const jobControllers = new Map();
+const jobExecutions = new Map();
 const previews = new Map();
 
 const PROGRESS = {
@@ -47,6 +49,7 @@ const PROGRESS = {
   done: [88, "生产构建已通过，准备部署"],
   deployment: [92, "正在发布独立站点并执行公网健康检查"],
   delivered: [100, "部署和健康检查均已通过"],
+  paused: [0, "执行已暂停，可重新执行"],
   failed: [100, "执行失败，未生成交付 URL"],
 };
 
@@ -69,7 +72,8 @@ function updateJob(projectId, patch, eventMessage) {
   return next;
 }
 
-function reportProgress(projectId, event) {
+function reportProgress(projectId, event, jobId) {
+  if (jobId && jobs.get(projectId)?.id !== jobId) return;
   const [progress, baseMessage] = PROGRESS[event.stage] || [10, `正在执行 ${event.stage}`];
   const attempt = Number(event.attempt) > 1 ? `（第 ${event.attempt} 次）` : "";
   const gate = event.ok === true ? "，门禁已通过" : event.ok === false ? "，门禁未通过，正在修正" : "";
@@ -96,6 +100,17 @@ function reportProgress(projectId, event) {
     message = `生产构建未通过，Codex 将读取真实构建日志并开始第 ${Number(event.attempt) + 1} 次修复`;
   }
   updateJob(projectId, { status: "running", stage, progress, kind: event.ok === false ? "warning" : "progress" }, message);
+}
+
+function pauseError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error("execution paused");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfPaused(signal) {
+  if (signal?.aborted) throw pauseError(signal);
 }
 
 function timingSafeEqual(left, right) {
@@ -162,7 +177,7 @@ function readBody(req) {
   });
 }
 
-async function callback(callbackUrl, body) {
+async function callback(callbackUrl, body, signal) {
   if (process.env.CODEGEN_DISABLE_CALLBACK === "1") return;
   const headers = { authorization: `Bearer ${CALLBACK_TOKEN}`, "content-type": "application/json" };
   if (process.env.SITES_BYPASS_TOKEN) {
@@ -172,11 +187,12 @@ async function callback(callbackUrl, body) {
     method: "POST",
     headers,
     body: JSON.stringify(body),
+    signal,
   });
   if (!response.ok) throw new Error(`control-plane callback failed (HTTP ${response.status})`);
 }
 
-async function deployPreview(preview) {
+async function deployPreview(preview, signal) {
   if (process.env.CODEGEN_PUBLIC_PREVIEW_BASE_URL) {
     const base = new URL(process.env.CODEGEN_PUBLIC_PREVIEW_BASE_URL);
     const local = new URL(preview.previewUrl);
@@ -189,7 +205,7 @@ async function deployPreview(preview) {
   }
   if (process.env.CODEGEN_DEPLOYMENT_PROVIDER === "cloudflare-quick-tunnel") {
     try {
-      const tunnel = await startQuickTunnel(preview.previewUrl);
+      const tunnel = await startQuickTunnel(preview.previewUrl, { signal });
       return {
         url: tunnel.url,
         stop: () => { tunnel.stop(); preview.stop(); },
@@ -205,14 +221,24 @@ async function deployPreview(preview) {
   throw new Error("DeploymentProvider is not configured; refusing to return localhost");
 }
 
-async function executeJob(job) {
+async function executeJob(job, controller) {
+  const { signal } = controller;
   updateJob(job.projectId, { id: job.id, status: "running", stage: "mobile-spec", progress: 7 }, "Runner 已接收任务，开始生成 Mobile Spec");
   const slug = slugify(job.projectId);
   const outDir = join(WORK_ROOT, slug);
   const specWorkRoot = join(SPEC_WORK_ROOT, slug);
   let deployment = null;
   try {
-    const resumable = await hasDeploymentCheckpoint(outDir, specWorkRoot, job.requirement);
+    throwIfPaused(signal);
+    if (job.forceRerun) {
+      const previous = previews.get(slug);
+      if (previous) {
+        previews.delete(slug);
+        previous.stop();
+      }
+    }
+    const resumable = !job.forceRerun && await hasDeploymentCheckpoint(outDir, specWorkRoot, job.requirement);
+    throwIfPaused(signal);
     let result;
     if (resumable) {
       result = { ok: true, outDir, attempts: 0 };
@@ -223,29 +249,38 @@ async function executeJob(job) {
       }, "检测到同一需求已通过 Mobile Spec 和生产构建，继续部署，无需重复生成");
     } else {
       await rm(outDir, { recursive: true, force: true });
-      await callback(job.callbackUrl, { status: "building", stage: "mobile-spec" });
+      throwIfPaused(signal);
+      await callback(job.callbackUrl, { status: "building", stage: "mobile-spec" }, signal);
+      throwIfPaused(signal);
       result = await withTimeout(generate({
         requirement: job.requirement,
         outDir,
         specWorkRoot,
         openaiApiKey: process.env.OPENAI_API_KEY,
-        onProgress: (event) => reportProgress(job.projectId, event),
+        onProgress: (event) => reportProgress(job.projectId, event, job.id),
+        signal,
       }), GENERATION_TIMEOUT_MS, "generation");
+      throwIfPaused(signal);
       if (!result.ok) throw new Error(`build failed after ${result.attempts} attempts`);
     }
 
+    throwIfPaused(signal);
     updateJob(job.projectId, { status: "running", stage: "deployment", progress: PROGRESS.deployment[0] }, PROGRESS.deployment[1]);
-    await callback(job.callbackUrl, { status: "building", stage: "deployment" });
+    await callback(job.callbackUrl, { status: "building", stage: "deployment" }, signal);
+    throwIfPaused(signal);
     const previous = previews.get(slug);
     if (previous) previous.stop();
     const preview = await startPreview(result.outDir);
-    deployment = await deployPreview(preview);
+    throwIfPaused(signal);
+    deployment = await deployPreview(preview, signal);
+    throwIfPaused(signal);
     previews.set(slug, deployment);
     const url = deployment.url;
     await waitForPublicUrl(url, {
       timeoutMs: DEPLOYMENT_HEALTH_TIMEOUT_MS,
       isAlive: deployment.isAlive,
       onAttempt: ({ attempt, status, error }) => {
+        if (signal.aborted || jobs.get(job.projectId)?.id !== job.id) return;
         const detail = status ? `HTTP ${status}` : error || "暂未收到公网响应";
         const passed = status > 0 && status < 500;
         updateJob(job.projectId, {
@@ -255,13 +290,17 @@ async function executeJob(job) {
           kind: passed ? "progress" : "warning",
         }, `公网健康检查第 ${attempt} 次：${detail}${passed ? "，检查通过" : "，等待后重试"}`);
       },
+      signal,
     });
+    throwIfPaused(signal);
     await callback(job.callbackUrl, {
       status: "delivered",
       stage: "delivered",
       url,
       evidence: { mobileSpecPassed: true, buildPassed: true, deployPassed: true },
-    });
+    }, signal);
+    throwIfPaused(signal);
+    if (jobs.get(job.projectId)?.id !== job.id) return;
     updateJob(job.projectId, {
       id: job.id,
       status: "delivered",
@@ -275,6 +314,20 @@ async function executeJob(job) {
       if (previews.get(slug) === deployment) previews.delete(slug);
       deployment.stop();
     }
+    if (jobs.get(job.projectId)?.id !== job.id) return;
+    if (signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+      const current = jobs.get(job.projectId);
+      updateJob(job.projectId, {
+        id: job.id,
+        status: "paused",
+        stage: "paused",
+        progress: current?.progress || 0,
+        error: null,
+        kind: "warning",
+      }, PROGRESS.paused[1]);
+      await withTimeout(callback(job.callbackUrl, { status: "paused", stage: "paused" }), 5_000, "pause callback").catch(() => undefined);
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     updateJob(job.projectId, {
       id: job.id,
@@ -284,6 +337,8 @@ async function executeJob(job) {
       error: message,
     }, `执行失败：${message}`);
     await callback(job.callbackUrl, { status: "failed", stage: "failed" }).catch(() => undefined);
+  } finally {
+    if (jobControllers.get(job.projectId) === controller) jobControllers.delete(job.projectId);
   }
 }
 
@@ -304,6 +359,44 @@ const server = createServer(async (req, res) => {
     const projectId = decodeURIComponent(req.url.slice("/jobs/".length));
     const job = jobs.get(projectId);
     send(res, job ? 200 : 404, job ? { job } : { error: "job not found" });
+    return;
+  }
+  const pauseMatch = req.method === "POST" ? req.url?.match(/^\/jobs\/([^/?]+)\/pause(?:\?.*)?$/) : null;
+  if (pauseMatch) {
+    const supplied = req.headers.authorization?.replace(/^Bearer\s+/i, "") || "";
+    if (!RUNNER_TOKEN || !supplied || !timingSafeEqual(RUNNER_TOKEN, supplied)) {
+      send(res, 401, { error: "unauthorized runner request" });
+      return;
+    }
+    const projectId = decodeURIComponent(pauseMatch[1]);
+    const job = jobs.get(projectId);
+    if (!job) {
+      send(res, 404, { error: "job not found" });
+      return;
+    }
+    if (job.status === "paused") {
+      send(res, 202, { job });
+      return;
+    }
+    if (!["queued", "running"].includes(job.status)) {
+      send(res, 409, { error: `job cannot be paused from ${job.status}` });
+      return;
+    }
+    const controller = jobControllers.get(projectId);
+    if (!controller) {
+      send(res, 409, { error: "job is no longer running" });
+      return;
+    }
+    updateJob(projectId, { kind: "warning" }, "正在停止当前执行阶段…");
+    controller.abort(new DOMException("execution paused", "AbortError"));
+    const execution = jobExecutions.get(projectId);
+    if (execution?.id === job.id) await execution.promise;
+    const paused = jobs.get(projectId);
+    if (!paused || paused.id !== job.id || paused.status !== "paused") {
+      send(res, 409, { error: "job changed before pause completed" });
+      return;
+    }
+    send(res, 202, { job: paused });
     return;
   }
   if (req.method !== "POST" || req.url !== "/jobs") {
@@ -338,7 +431,13 @@ const server = createServer(async (req, res) => {
     send(res, 202, { job: existing });
     return;
   }
-  const job = { id: `job_${crypto.randomUUID()}`, projectId, requirement, callbackUrl };
+  const job = {
+    id: `job_${crypto.randomUUID()}`,
+    projectId,
+    requirement,
+    callbackUrl,
+    forceRerun: body?.forceRerun === true,
+  };
   jobs.delete(projectId);
   updateJob(projectId, {
     id: job.id,
@@ -346,11 +445,19 @@ const server = createServer(async (req, res) => {
     stage: "mobile-spec",
     progress: PROGRESS.queued[0],
   }, PROGRESS.queued[1]);
-  setImmediate(() => executeJob(job));
+  const controller = new AbortController();
+  jobControllers.set(projectId, controller);
+  const execution = new Promise((resolveExecution) => setImmediate(resolveExecution))
+    .then(() => executeJob(job, controller));
+  jobExecutions.set(projectId, { id: job.id, promise: execution });
+  execution.finally(() => {
+    if (jobExecutions.get(projectId)?.id === job.id) jobExecutions.delete(projectId);
+  }).catch(() => undefined);
   send(res, 202, { job: jobs.get(projectId) });
 });
 
 function shutdown() {
+  for (const controller of jobControllers.values()) controller.abort(new DOMException("runner shutting down", "AbortError"));
   for (const preview of previews.values()) preview.stop();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 2000).unref();

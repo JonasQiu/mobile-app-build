@@ -12,13 +12,13 @@ import { callCodexStructured } from "./codex-cli.js";
 // (response_format json_schema) are required, so pick a model that supports it.
 const DEFAULT_MODEL = "gpt-4o";
 
-export async function callLLM({ requirement, attempt, prevBuildError, apiKey, model, specAnchor, proposalAnchor, designAnchor, tasksAnchor }) {
+export async function callLLM({ requirement, attempt, prevBuildError, apiKey, model, specAnchor, proposalAnchor, designAnchor, tasksAnchor, signal }) {
   const key = apiKey || process.env.OPENAI_API_KEY;
   const messages = buildPrompt({ requirement, attempt, prevBuildError, specAnchor, proposalAnchor, designAnchor, tasksAnchor });
   const resolvedModel = model || process.env.CODEGEN_MODEL || DEFAULT_MODEL;
 
   if (!key) {
-    const parsed = await callCodexStructured({ schema: SiteManifest, name: "site_manifest", messages });
+    const parsed = await callCodexStructured({ schema: SiteManifest, name: "site_manifest", messages, signal });
     return normalizeManifest(parsed);
   }
 
@@ -28,7 +28,7 @@ export async function callLLM({ requirement, attempt, prevBuildError, apiKey, mo
     model: resolvedModel,
     messages,
     response_format: zodResponseFormat(SiteManifest, "site_manifest"),
-  });
+  }, { signal });
 
   const parsed = result.choices[0]?.message?.parsed;
   if (!parsed) {

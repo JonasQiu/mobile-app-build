@@ -3,11 +3,31 @@ import { basename } from "node:path";
 
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
+function abortError(signal) {
+  return signal?.reason instanceof Error ? signal.reason : new DOMException("execution paused", "AbortError");
+}
+
+function abortableSleep(ms, signal) {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) return Promise.reject(abortError(signal));
+  return new Promise((resolveSleep, rejectSleep) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolveSleep();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      rejectSleep(abortError(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 function recentLog(log, lineCount = 10) {
   return log.trim().split("\n").slice(-lineCount).join("\n");
 }
 
-export async function startQuickTunnel(localUrl, { timeoutMs = 90_000 } = {}) {
+export async function startQuickTunnel(localUrl, { timeoutMs = 90_000, signal } = {}) {
   const command = process.env.CODEGEN_TUNNEL_BIN;
   if (!command) throw new Error("CODEGEN_TUNNEL_BIN is not configured");
   const isCloudflared = basename(command).startsWith("cloudflared");
@@ -32,6 +52,10 @@ export async function startQuickTunnel(localUrl, { timeoutMs = 90_000 } = {}) {
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (signal?.aborted) {
+      stop();
+      throw abortError(signal);
+    }
     const match = log.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
     const connectorReady = /Registered tunnel connection/i.test(log);
     if (match && (!isCloudflared || connectorReady)) {
@@ -44,14 +68,19 @@ export async function startQuickTunnel(localUrl, { timeoutMs = 90_000 } = {}) {
       };
     }
     if (closed) break;
-    await sleep(250);
+    try {
+      await abortableSleep(250, signal);
+    } catch (error) {
+      stop();
+      throw error;
+    }
   }
   stop();
   const detail = recentLog(log);
   throw new Error(`temporary deployment tunnel failed${detail ? `: ${detail}` : ""}`);
 }
 
-function curlProbe(url) {
+function curlProbe(url, signal) {
   const command = process.env.CODEGEN_HEALTHCHECK_BIN;
   if (!command) return null;
   return new Promise((resolveProbe) => {
@@ -77,7 +106,12 @@ function curlProbe(url) {
     const finish = (result) => {
       if (settled) return;
       settled = true;
+      signal?.removeEventListener("abort", onAbort);
       resolveProbe(result);
+    };
+    const onAbort = () => {
+      child.kill("SIGTERM");
+      finish({ status: 0, error: "execution paused", exitCode: null, aborted: true });
     };
     child.stdout.on("data", (chunk) => stdout.push(chunk));
     child.stderr.on("data", (chunk) => stderr.push(chunk));
@@ -91,14 +125,18 @@ function curlProbe(url) {
         exitCode: code,
       });
     });
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
-async function defaultProbe(url) {
-  const curlResult = await curlProbe(url);
+async function defaultProbe(url, signal) {
+  const curlResult = await curlProbe(url, signal);
   if (curlResult !== null) return curlResult;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12_000);
+  const onAbort = () => controller.abort(abortError(signal));
+  signal?.addEventListener("abort", onAbort, { once: true });
   try {
     const response = await fetch(url, { redirect: "manual", signal: controller.signal });
     return { status: response.status, error: "", exitCode: null };
@@ -110,6 +148,7 @@ async function defaultProbe(url) {
     };
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -119,22 +158,25 @@ export async function waitForPublicUrl(url, {
   isAlive,
   onAttempt,
   probe = defaultProbe,
+  signal,
 } = {}) {
   const deadline = Date.now() + timeoutMs;
   let lastStatus = 0;
   let lastError = "";
   let attempts = 0;
   while (Date.now() < deadline) {
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("execution paused", "AbortError");
     if (isAlive && !isAlive()) {
       throw new Error("deployment tunnel exited before health check completed");
     }
     attempts += 1;
     let result;
     try {
-      result = await probe(url);
+      result = await probe(url, signal);
     } catch (error) {
       result = { status: 0, error: error instanceof Error ? error.message : String(error) };
     }
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("execution paused", "AbortError");
     lastStatus = Number(result?.status) || 0;
     lastError = String(result?.error || "");
     onAttempt?.({
@@ -147,7 +189,8 @@ export async function waitForPublicUrl(url, {
 
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;
-    await sleep(Math.min(remainingMs, retryDelayMs * Math.min(attempts, 4)));
+    const delayMs = Math.min(remainingMs, retryDelayMs * Math.min(attempts, 4));
+    await abortableSleep(delayMs, signal);
   }
   const detail = lastStatus
     ? `last response HTTP ${lastStatus}`

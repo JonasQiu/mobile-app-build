@@ -43,3 +43,17 @@ test("public health check fails immediately when the deployment exits", async ()
     /deployment tunnel exited before health check completed/,
   );
 });
+
+test("public health check stops retrying when the job is paused", async () => {
+  const controller = new AbortController();
+  const startedAt = Date.now();
+  const waiting = waitForPublicUrl("https://example.test", {
+    timeoutMs: 5_000,
+    retryDelayMs: 1_000,
+    signal: controller.signal,
+    probe: async () => ({ status: 0, error: "still starting" }),
+  });
+  setTimeout(() => controller.abort(new DOMException("execution paused", "AbortError")), 10);
+  await assert.rejects(waiting, (error) => error?.name === "AbortError");
+  assert.ok(Date.now() - startedAt < 500, "pause should interrupt the retry delay");
+});

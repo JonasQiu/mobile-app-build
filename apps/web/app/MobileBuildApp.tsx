@@ -43,6 +43,7 @@ const STAGE_LABELS: Record<string, string> = {
   build: "正在测试与生产构建",
   deployment: "正在部署并执行健康检查",
   delivered: "部署完成",
+  paused: "执行已暂停",
 };
 
 const STAGES = [
@@ -55,7 +56,7 @@ const STAGES = [
 ];
 
 function stageIndex(stage: string | null) {
-  if (stage === "failed") return -1;
+  if (stage === "failed" || stage === "paused") return -1;
   return Math.max(0, STAGES.findIndex((item) => item.key === stage));
 }
 
@@ -75,8 +76,8 @@ async function readJsonResponse<T>(response: Response, fallbackMessage: string):
   }
 }
 
-function Icon({ name }: { name: "menu" | "spark" | "send" | "chevron" | "x" | "plus" | "logout" | "external" | "trash" }) {
-  const glyphs = { menu: "☰", spark: "✦", send: "↑", chevron: "›", x: "×", plus: "+", logout: "↪", external: "↗", trash: "⌫" };
+function Icon({ name }: { name: "menu" | "spark" | "send" | "chevron" | "x" | "plus" | "logout" | "external" | "trash" | "pause" | "refresh" }) {
+  const glyphs = { menu: "☰", spark: "✦", send: "↑", chevron: "›", x: "×", plus: "+", logout: "↪", external: "↗", trash: "⌫", pause: "Ⅱ", refresh: "↻" };
   return <span aria-hidden="true" className={`icon icon-${name}`}>{glyphs[name]}</span>;
 }
 
@@ -107,6 +108,7 @@ export function MobileBuildApp() {
   const [genError, setGenError] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [deletingProjectId, setDeletingProjectId] = useState("");
+  const [pausingProjectId, setPausingProjectId] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const activeProject = projects.find((item) => item.id === activeProjectId) ?? null;
   const generating = ["dispatching", "building"].includes(activeProject?.status || "");
@@ -261,6 +263,7 @@ export function MobileBuildApp() {
 
   async function runProject(projectId: string) {
     if (!projectId) return;
+    const previousProject = projects.find((item) => item.id === projectId);
     setGenError("");
     setGenProgress("正在派发 Codex 任务…");
     setPreviewUrl("");
@@ -270,23 +273,26 @@ export function MobileBuildApp() {
       currentStage: "mobile-spec",
       executionProgress: 2,
       executionMessage: "正在向受信任 Runner 派发任务",
+      previewUrl: null,
     } : item));
     try {
       const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/jobs`, {
         method: "POST",
-        headers: { "content-type": "application/json", "idempotency-key": `project-${projectId}` },
+        headers: { "content-type": "application/json", "idempotency-key": `project-${projectId}-${Date.now()}` },
         body: JSON.stringify({}),
       });
       const data = await readJsonResponse<{ job?: { id: string }; error?: string; code?: string }>(response, "Codex 任务派发失败");
       if (!response.ok || !data.job) {
         if (data.code !== "EXECUTOR_DISPATCH_UNKNOWN") {
           setProjects((items) => items.map((item) => item.id === projectId ? {
-            ...item,
-            status: "queued",
-            currentStage: "requirement",
-            executionProgress: 0,
-            executionMessage: undefined,
+            ...(previousProject || item),
+            status: previousProject?.status || "queued",
+            currentStage: previousProject?.currentStage || "requirement",
+            executionProgress: previousProject?.executionProgress || 0,
+            executionMessage: previousProject?.executionMessage,
+            previewUrl: previousProject?.previewUrl || null,
           } : item));
+          if (previousProject && isExternalDeliveryUrl(previousProject.previewUrl)) setPreviewUrl(previousProject.previewUrl);
         }
         throw new Error(data.error || "Codex 任务派发失败");
       }
@@ -308,6 +314,35 @@ export function MobileBuildApp() {
 
   function handleGenerate() {
     void runProject(activeProjectId);
+  }
+
+  async function pauseProject(projectId: string) {
+    if (!projectId || pausingProjectId || activeProject?.status !== "building") return;
+    setGenError("");
+    setPausingProjectId(projectId);
+    setGenProgress("正在停止当前执行阶段…");
+    try {
+      const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/pause`, { method: "POST" });
+      const data = await readJsonResponse<{ project?: { status: string; currentStage: string }; executionCapacity?: ExecutionCapacity; error?: string }>(response, "暂停任务失败");
+      if (!response.ok || data.project?.status !== "paused") throw new Error(data.error || "Runner 未确认暂停");
+      setProjects((items) => items.map((item) => item.id === projectId ? {
+        ...item,
+        status: "paused",
+        currentStage: "paused",
+        previewUrl: null,
+        executionMessage: "执行已暂停，可重新执行",
+        executionEvents: [
+          ...(item.executionEvents || []),
+          { id: `paused-${Date.now()}`, at: new Date().toISOString(), stage: "paused", kind: "warning", message: "执行已暂停，可重新执行", progress: item.executionProgress || 0 },
+        ].slice(-12),
+      } : item));
+      if (data.executionCapacity) setExecutionCapacity(data.executionCapacity);
+      setGenProgress("执行已暂停，可重新执行");
+    } catch (error) {
+      setGenError(error instanceof Error ? error.message : "暂停任务失败");
+    } finally {
+      setPausingProjectId("");
+    }
   }
 
   const deliveryUrl = isExternalDeliveryUrl(activeProject?.previewUrl || null) ? activeProject.previewUrl : previewUrl;
@@ -367,15 +402,15 @@ export function MobileBuildApp() {
             <div className="message-user"><p>{submittedPrompt}</p></div>
             <div className="message-agent">
               <div className="agent-avatar"><Icon name="spark" /></div>
-              <div><p className="agent-label">{activeProject ? activeProject.name : "需求已保存"}</p><p>{activeProject?.status === "delivered" ? "该历史项目已完成，可查看执行记录和交付页面。" : ["dispatching", "building"].includes(activeProject?.status || "") ? "该项目正在真实执行，下面会每 15 秒同步进度与消息。" : "已原样保存，没有关键词分类或模板替换。"}</p></div>
+              <div><p className="agent-label">{activeProject ? activeProject.name : "需求已保存"}</p><p>{activeProject?.status === "delivered" ? "该历史项目已完成，可查看交付页面，也可以重新执行。" : activeProject?.status === "paused" ? "该项目已经停止后续执行，可以从头重新执行。" : ["dispatching", "building"].includes(activeProject?.status || "") ? "该项目正在真实执行，下面会每 15 秒同步进度与消息。" : "已原样保存，没有关键词分类或模板替换。"}</p></div>
             </div>
             <article className="plan-card scope-card">
-              <div className="plan-head"><div><span>项目执行</span><h3>{activeProject?.status === "delivered" ? "交付完成" : activeProject?.status === "failed" ? "执行失败" : generating ? "正在构建" : "准备执行"}</h3></div><span className={`version-pill ${activeProject?.status === "failed" ? "failed" : ""}`}>{progressValue}%</span></div>
+              <div className="plan-head"><div><span>项目执行</span><h3>{activeProject?.status === "delivered" ? "交付完成" : activeProject?.status === "failed" ? "执行失败" : activeProject?.status === "paused" ? "执行已暂停" : generating ? "正在构建" : "准备执行"}</h3></div><span className={`version-pill ${activeProject?.status === "failed" ? "failed" : activeProject?.status === "paused" ? "paused" : ""}`}>{progressValue}%</span></div>
               <div className="live-progress" aria-label={`执行进度 ${progressValue}%`}><span style={{ width: `${progressValue}%` }} /></div>
               <div className="stage-grid">
                 {STAGES.map((stage, index) => {
                   const done = activeProject?.status === "delivered" || index < currentStageIndex;
-                  const running = activeProject?.status !== "failed" && index === currentStageIndex;
+                  const running = !["failed", "paused"].includes(activeProject?.status || "") && index === currentStageIndex;
                   return <div className={`stage-step ${done ? "done" : ""} ${running ? "running" : ""}`} key={stage.key}><i>{done ? "✓" : index + 1}</i><span><strong>{stage.label}</strong><small>{stage.detail}</small></span></div>;
                 })}
               </div>
@@ -386,7 +421,9 @@ export function MobileBuildApp() {
               </section>
               {genError ? <pre className="gen-error" role="alert">{genError}</pre> : null}
               <div className="plan-actions">
-                {deliveryUrl ? <a className="primary-button" href={deliveryUrl} target="_blank" rel="noreferrer">打开交付页面<Icon name="external" /></a> : <button className="primary-button" onClick={handleGenerate} disabled={!submittedPrompt || !activeProjectId || generating || capacityFull}>{generating ? "执行中" : activeProject?.status === "failed" ? "重新执行" : "开始真实构建"}<Icon name="spark" /></button>}
+                {generating ? <button className="primary-button pause-button" onClick={() => void pauseProject(activeProjectId)} disabled={activeProject?.status !== "building" || pausingProjectId === activeProjectId}>{activeProject?.status === "dispatching" ? "正在派发" : pausingProjectId === activeProjectId ? "暂停中…" : "暂停执行"}<Icon name="pause" /></button> : null}
+                {!generating && deliveryUrl ? <a className="primary-button" href={deliveryUrl} target="_blank" rel="noreferrer">打开交付页面<Icon name="external" /></a> : null}
+                {!generating ? <button className="primary-button" onClick={handleGenerate} disabled={!submittedPrompt || !activeProjectId || capacityFull}>{["paused", "failed", "delivered"].includes(activeProject?.status || "") ? "重新执行" : "开始真实构建"}<Icon name={["paused", "failed", "delivered"].includes(activeProject?.status || "") ? "refresh" : "spark"} /></button> : null}
                 <button className="secondary-button" onClick={() => setSheet("workflow")}>流程说明<Icon name="chevron" /></button>
               </div>
             </article>

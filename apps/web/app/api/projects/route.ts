@@ -82,6 +82,14 @@ async function syncRunnerState(userId: string, projects: ProjectRow[]) {
         project.currentStage = "failed";
         return;
       }
+      if (job.status === "paused") {
+        await getD1().prepare(`UPDATE projects SET status = 'paused', current_stage = 'paused', preview_url = NULL,
+          updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?`).bind(project.id, userId).run();
+        project.status = "paused";
+        project.currentStage = "paused";
+        project.previewUrl = null;
+        return;
+      }
       if (job.status === "delivered") {
         const evidence = job.evidence;
         if (!evidence?.mobileSpecPassed || !evidence.buildPassed || !evidence.deployPassed || !validDeliveryUrl(job.url)) {

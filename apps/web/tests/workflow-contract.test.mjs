@@ -117,3 +117,20 @@ test("Codex implementation progress exposes meaningful runner events", async () 
   assert.match(runner, /正在校验 Codex 输出的路径/);
   assert.match(app, /STAGE_LABELS\[event\.stage/);
 });
+
+test("running projects can be paused and terminal projects can be rerun", async () => {
+  const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
+  const pauseRoute = await readFile(new URL("app/api/v1/projects/[projectId]/pause/route.ts", root), "utf8");
+  const jobsRoute = await readFile(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root), "utf8");
+  const deliveryRoute = await readFile(new URL("app/api/v1/projects/[projectId]/delivery/route.ts", root), "utf8");
+  const projectsRoute = await readFile(new URL("app/api/projects/route.ts", root), "utf8");
+  assert.match(app, /暂停执行/);
+  assert.match(app, /重新执行/);
+  assert.match(app, /\/pause/);
+  assert.match(pauseRoute, /requireSession/);
+  assert.match(pauseRoute, /owner_user_id = \?/);
+  assert.match(pauseRoute, /status = 'paused'/);
+  assert.match(jobsRoute, /forceRerun/);
+  assert.match(deliveryRoute, /body\?\.status === "paused"/);
+  assert.match(projectsRoute, /job\.status === "paused"/);
+});

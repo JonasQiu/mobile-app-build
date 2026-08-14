@@ -55,13 +55,13 @@ function client(apiKey) {
   };
 }
 
-async function parseCall(client, model, schema, name, messages) {
-  if (!client) return callCodexStructured({ schema, name, messages });
+async function parseCall(client, model, schema, name, messages, signal) {
+  if (!client) return callCodexStructured({ schema, name, messages, signal });
   const result = await client.chat.completions.parse({
     model,
     messages,
     response_format: zodResponseFormat(schema, name),
-  });
+  }, { signal });
   const parsed = result.choices[0]?.message?.parsed;
   if (!parsed) {
     const refusal = result.choices[0]?.message?.refusal;
@@ -70,7 +70,7 @@ async function parseCall(client, model, schema, name, messages) {
   return parsed;
 }
 
-export async function authorProposal({ requirement, apiKey, model }) {
+export async function authorProposal({ requirement, apiKey, model, signal }) {
   const { client: ai, model: defaultModel } = client(apiKey);
   const system = [
     "你是一名资深前端 spec 作者。任务：为一句中文需求，产出可构建的多页 Next.js 网站的 Proposal 与 Spec。",
@@ -83,7 +83,7 @@ export async function authorProposal({ requirement, apiKey, model }) {
   const parsed = await parseCall(ai, model || defaultModel, ProposalAuthor, "proposal_author", [
     { role: "system", content: system.join("\n\n") },
     { role: "user", content: user },
-  ]);
+  ], signal);
   return {
     proposalMd: finalizeProposalMd(parsed.proposalBodyMd),
     specMd: parsed.specMd.trim() + "\n",
@@ -91,7 +91,7 @@ export async function authorProposal({ requirement, apiKey, model }) {
   };
 }
 
-export async function authorDesign({ requirement, proposalMd, specMd, apiKey, model }) {
+export async function authorDesign({ requirement, proposalMd, specMd, apiKey, model, signal }) {
   const { client: ai, model: defaultModel } = client(apiKey);
   const system = [
     "你是资深前端架构师。基于已确认的 Proposal 与 Spec，产出 Design（实现方案）与 Review（设计评审）。",
@@ -102,11 +102,11 @@ export async function authorDesign({ requirement, proposalMd, specMd, apiKey, mo
   const parsed = await parseCall(ai, model || defaultModel, DesignAuthor, "design_author", [
     { role: "system", content: system.join("\n\n") },
     { role: "user", content: user },
-  ]);
+  ], signal);
   return { designMd: parsed.designMd.trim() + "\n", reviewMd: finalizeReviewMd(parsed.reviewBodyMd) };
 }
 
-export async function authorTasks({ requirement, proposalMd, specMd, designMd, apiKey, model, prevGateError, attempt = 1 }) {
+export async function authorTasks({ requirement, proposalMd, specMd, designMd, apiKey, model, prevGateError, attempt = 1, signal }) {
   const { client: ai, model: defaultModel } = client(apiKey);
   const system = [
     "你是资深前端 TL。基于 Proposal/Spec/Design 拆解可执行的前端任务清单（tasks.md）。",
@@ -119,6 +119,6 @@ export async function authorTasks({ requirement, proposalMd, specMd, designMd, a
   const parsed = await parseCall(ai, model || defaultModel, TasksAuthor, "tasks_author", [
     { role: "system", content: system.join("\n\n") },
     { role: "user", content: user },
-  ]);
+  ], signal);
   return { tasksMd: parsed.tasksMd.trim() + "\n" };
 }
