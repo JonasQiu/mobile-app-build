@@ -40,7 +40,19 @@ export function normalizeManifest(manifest) {
   // Dedup files by path, last one wins (matches writeManifest semantics).
   const byPath = new Map();
   for (const f of manifest.files) byPath.set(f.path, f);
-  const normalized = { ...manifest, files: [...byPath.values()] };
+  // Structured-output schemas can constrain array length but cannot guarantee
+  // href uniqueness. Keep the first definition for a route so a harmless LLM
+  // duplicate does not fail an otherwise valid build.
+  const byHref = new Map();
+  for (const route of manifest.navRoutes) {
+    if (!byHref.has(route.href)) byHref.set(route.href, route);
+  }
+  const navRoutes = [...byHref.values()];
+  if (navRoutes.length < 4) {
+    throw new Error(`Manifest must contain at least 4 distinct routes after normalization; received ${navRoutes.length}`);
+  }
+  const normalized = { ...manifest, navRoutes, files: [...byPath.values()] };
+  SiteManifest.parse(normalized);
   validateManifest(normalized);
   return normalized;
 }

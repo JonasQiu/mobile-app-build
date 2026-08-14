@@ -77,3 +77,22 @@ test("normalizeManifest rejects build-time Google font downloads", () => {
   manifest.files.find((file) => file.path === "app/layout.tsx").content = 'import { Geist } from "next/font/google";';
   assert.throws(() => normalizeManifest(manifest), /must not download fonts/);
 });
+
+test("normalizeManifest removes duplicate nav hrefs when four distinct routes remain", () => {
+  const manifest = structuredClone(VALID);
+  manifest.navRoutes.push({ href: "/courses", fileSubpath: "app/courses/page.tsx" });
+  const normalized = normalizeManifest(manifest);
+  assert.equal(normalized.navRoutes.length, 4);
+  assert.deepEqual(normalized.navRoutes.map((route) => route.href), ["/", "/courses", "/trainers", "/contact"]);
+});
+
+test("normalizeManifest requires four distinct routes after deduplication", () => {
+  const manifest = structuredClone(VALID);
+  manifest.navRoutes = [
+    manifest.navRoutes[0],
+    manifest.navRoutes[1],
+    manifest.navRoutes[2],
+    { ...manifest.navRoutes[2] },
+  ];
+  assert.throws(() => normalizeManifest(manifest), /at least 4 distinct routes.*received 3/);
+});

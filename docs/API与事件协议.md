@@ -150,6 +150,8 @@ Body：
 
 失败包含 `status: "failed"`、`stage: "failed"` 和裁剪后的 `error`。
 
+若 Codex 返回重复 `navRoutes.href`，Runner 在 Manifest 规范化阶段保留第一项并去重；仍有至少 4 个不同路由时继续构建，不足 4 个或存在其他结构错误时把诊断作为下一次生成输入，最多尝试三次。每次结构重试都写入 `implementation` 阶段的 warning event。
+
 ### 暂停任务
 
 `POST /jobs/{projectId}/pause`

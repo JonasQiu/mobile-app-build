@@ -30,7 +30,7 @@ const SYSTEM = `你是一名资深前端工程师。请根据用户需求和已�
 只返回 \`site_manifest\` JSON，不要返回 Markdown 或解释：
 - siteName: 网站名
 - brand: { accentColor: 十六进制颜色, mode: "dark" | "light", slogan: 一句口号 }
-- navRoutes: 4~8 项，每项 { href, fileSubpath }
+- navRoutes: 4~8 项，每项 { href, fileSubpath }；href 必须互不重复，每个 fileSubpath 只对应一个路由
 - files: 8~40 项，每项 { path, content }，content 必须是完整文件内容。`;
 
 export function buildPrompt({
@@ -56,7 +56,7 @@ export function buildPrompt({
 
   let content = `# 本次原始需求\n${requirement}\n\n严格按照上面的本次需求与 Mobile Spec 输出完整 site_manifest。生成前逐项核对：页面、内容、交互、数据模型都必须属于本次需求。`;
   if (attempt > 1) {
-    content += `\n\n# 第 ${attempt} 次构建修复\n上一次 \`npm run build\` 失败，日志末尾如下：\n\n\`\`\`\n${prevBuildError}\n\`\`\`\n\n请修复这些错误并重新输出完整 site_manifest，不要只给 diff。`;
+    content += `\n\n# 第 ${attempt} 次实现修复\n上一次 site_manifest 校验或 \`npm run build\` 未通过，诊断信息如下：\n\n\`\`\`\n${prevBuildError}\n\`\`\`\n\n请修复这些错误并重新输出完整 site_manifest，不要只给 diff。`;
   }
   messages.push({ role: "user", content });
   return messages;

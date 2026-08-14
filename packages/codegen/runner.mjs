@@ -97,7 +97,12 @@ function reportProgress(projectId, event, jobId) {
   } else if (event.stage === "done") {
     message = `生产构建已通过（第 ${event.attempt} 次），准备部署`;
   } else if (event.stage === "retry") {
-    message = `生产构建未通过，Codex 将读取真实构建日志并开始第 ${Number(event.attempt) + 1} 次修复`;
+    if (event.phase === "manifest") {
+      const detail = String(event.reason || "结构化输出不符合约束").slice(0, 180);
+      message = `Codex 输出未通过结构校验：${detail}；正在开始第 ${Number(event.attempt) + 1} 次生成`;
+    } else {
+      message = `生产构建未通过，Codex 将读取真实构建日志并开始第 ${Number(event.attempt) + 1} 次修复`;
+    }
   }
   updateJob(projectId, { status: "running", stage, progress, kind: event.ok === false ? "warning" : "progress" }, message);
 }

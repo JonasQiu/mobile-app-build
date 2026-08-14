@@ -61,18 +61,27 @@ export async function generate({
   while (attempt < MAX_ATTEMPTS) {
     attempt += 1;
     progress({ stage: "llm", phase: "start", attempt });
-    manifest = await callLLM({
-      requirement,
-      attempt,
-      prevBuildError,
-      apiKey: openaiApiKey,
-      model,
-      specAnchor,
-      proposalAnchor,
-      designAnchor,
-      tasksAnchor,
-      signal,
-    });
+    try {
+      manifest = await callLLM({
+        requirement,
+        attempt,
+        prevBuildError,
+        apiKey: openaiApiKey,
+        model,
+        specAnchor,
+        proposalAnchor,
+        designAnchor,
+        tasksAnchor,
+        signal,
+      });
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      prevBuildError = `SiteManifest validation failed: ${reason}`;
+      progress({ stage: "retry", phase: "manifest", attempt, reason, buildOk: false });
+      if (attempt >= MAX_ATTEMPTS) throw new Error(`Codex output remained invalid after ${attempt} attempts: ${reason}`);
+      continue;
+    }
     progress({
       stage: "llm",
       phase: "complete",
