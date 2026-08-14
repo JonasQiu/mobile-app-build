@@ -3,6 +3,32 @@ import { getD1, jsonError, requireSession } from "../../../../../lib/server-auth
 type ProjectRow = { id: string; status: string; prompt: string; currentStage: string | null };
 
 const MAX_ACTIVE_PROJECTS = 2;
+const RUNNER_REQUEST_TIMEOUT_MS = 10_000;
+
+function resolveRunnerUrls(value: string) {
+  try {
+    const jobsUrl = new URL(value);
+    if (!["http:", "https:"].includes(jobsUrl.protocol)) return null;
+    jobsUrl.pathname = jobsUrl.pathname.replace(/\/+$/, "");
+    if (!jobsUrl.pathname.endsWith("/jobs")) {
+      jobsUrl.pathname = `${jobsUrl.pathname}/jobs`.replace(/\/{2,}/g, "/");
+    }
+    const healthUrl = new URL("/health", jobsUrl);
+    return { jobsUrl: jobsUrl.toString(), healthUrl: healthUrl.toString() };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchRunner(url: string, init?: RequestInit) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RUNNER_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export async function POST(request: Request, context: RouteContext<"/api/v1/projects/[projectId]/jobs">) {
   const user = await requireSession(request);
@@ -20,6 +46,36 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
       error: "Codex Runner 正在维护，当前不会启动或伪造任务，请稍后重试",
       code: "EXECUTOR_OFFLINE",
       retryable: false,
+    }, { status: 503, headers: { "cache-control": "no-store" } });
+  }
+  const runnerUrls = resolveRunnerUrls(endpoint);
+  if (!runnerUrls) {
+    return Response.json({
+      error: "Codex Runner 地址配置无效，任务尚未启动",
+      code: "EXECUTOR_CONFIG_INVALID",
+      retryable: false,
+    }, { status: 503, headers: { "cache-control": "no-store" } });
+  }
+
+  try {
+    const healthResponse = await fetchRunner(runnerUrls.healthUrl, {
+      headers: { accept: "application/json" },
+    });
+    const health = healthResponse.headers.get("content-type")?.includes("application/json")
+      ? await healthResponse.json().catch(() => null) as { ok?: boolean; deploymentProviderConfigured?: boolean } | null
+      : null;
+    if (!healthResponse.ok || !health?.ok || !health.deploymentProviderConfigured) {
+      return Response.json({
+        error: "Codex Runner 当前不可用，任务尚未启动，请稍后重试",
+        code: "EXECUTOR_UNHEALTHY",
+        retryable: true,
+      }, { status: 503, headers: { "cache-control": "no-store" } });
+    }
+  } catch {
+    return Response.json({
+      error: "Codex Runner 当前无法连接，任务尚未启动，请稍后重试",
+      code: "EXECUTOR_UNREACHABLE",
+      retryable: true,
     }, { status: 503, headers: { "cache-control": "no-store" } });
   }
 
@@ -61,14 +117,14 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
 
   let response: Response;
   try {
-    response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-      "idempotency-key": idempotencyKey,
-    },
-    body: JSON.stringify({ projectId: project.id, requirement: project.prompt, instructions: prompt, callbackUrl }),
+    response = await fetchRunner(runnerUrls.jobsUrl, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "idempotency-key": idempotencyKey,
+      },
+      body: JSON.stringify({ projectId: project.id, requirement: project.prompt, instructions: prompt, callbackUrl }),
     });
   } catch (error) {
     return Response.json({
@@ -77,15 +133,21 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
       retryable: true,
     }, { status: 502, headers: { "cache-control": "no-store" } });
   }
-  const data = await response.json().catch(() => null) as {
-    job?: { id?: string };
-    error?: string | { message?: string };
-  } | null;
+  const data = response.headers.get("content-type")?.includes("application/json")
+    ? await response.json().catch(() => null) as {
+      job?: { id?: string };
+      error?: string | { message?: string };
+    } | null
+    : null;
   const jobId = data?.job?.id;
   if (!response.ok || !jobId) {
     await releaseClaim();
+    const runnerError = typeof data?.error === "string" ? data.error : data?.error?.message;
+    const fallback = response.ok
+      ? "Codex Runner 响应缺少任务编号，任务未启动"
+      : `Codex Runner 拒绝任务（HTTP ${response.status}）`;
     return Response.json({
-      error: typeof data?.error === "string" ? data.error : data?.error?.message || "云端 Codex Runner 未接受任务",
+      error: runnerError || fallback,
       code: "EXECUTOR_DISPATCH_FAILED",
       retryable: response.status >= 500,
     }, { status: 502, headers: { "cache-control": "no-store" } });

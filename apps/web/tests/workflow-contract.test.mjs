@@ -35,6 +35,10 @@ test("the browser dispatches a server-side job and never calls localhost", async
   const jobsRoute = await readFile(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root), "utf8");
   assert.match(jobsRoute, /CODEX_RUNNER_URL/);
   assert.match(jobsRoute, /CODEX_RUNNER_TOKEN/);
+  assert.match(jobsRoute, /healthUrl/);
+  assert.match(jobsRoute, /EXECUTOR_UNHEALTHY/);
+  assert.match(jobsRoute, /EXECUTOR_UNREACHABLE/);
+  assert.match(jobsRoute, /响应缺少任务编号/);
   assert.doesNotMatch(jobsRoute, /callbackToken.*JSON\.stringify/s);
   await access(new URL("package.json", codegen));
   await access(new URL("src/generate.js", codegen));

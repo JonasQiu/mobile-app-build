@@ -81,6 +81,8 @@ flowchart LR
 { "ok": true, "deploymentProviderConfigured": true }
 ```
 
+控制站在占用执行名额前先请求该接口，10 秒内不可达、返回非 JSON、`ok` 为 false 或未配置 DeploymentProvider 时直接返回 503，项目保持原状态。这样失效的 Runner 地址不会把项目卡在 `dispatching`。
+
 ### 创建任务
 
 `POST /jobs`
@@ -105,6 +107,8 @@ Body：
 ```
 
 返回 `202` 与异步 job；相同 `projectId` 正在运行时返回现有 job。
+
+控制站只在收到 JSON 响应且 `job.id` 存在时把项目更新为 `building`。Runner 拒绝请求、返回非 JSON 或缺少任务编号时释放本次派发占位，并返回可诊断的错误码与 HTTP 状态。
 
 ### 查询任务
 
