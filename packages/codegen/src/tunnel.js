@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { Resolver } from "node:dns/promises";
 import { basename } from "node:path";
 
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
@@ -27,13 +28,20 @@ function recentLog(log, lineCount = 10) {
   return log.trim().split("\n").slice(-lineCount).join("\n");
 }
 
+export function quickTunnelCommand(command, localUrl) {
+  const isCloudflared = basename(command).startsWith("cloudflared");
+  return {
+    isCloudflared,
+    args: isCloudflared
+      ? ["tunnel", "--url", localUrl, "--no-autoupdate", "--protocol", "http2"]
+      : ["tunnel", "quick-start", localUrl],
+  };
+}
+
 export async function startQuickTunnel(localUrl, { timeoutMs = 90_000, signal } = {}) {
   const command = process.env.CODEGEN_TUNNEL_BIN;
   if (!command) throw new Error("CODEGEN_TUNNEL_BIN is not configured");
-  const isCloudflared = basename(command).startsWith("cloudflared");
-  const args = isCloudflared
-    ? ["tunnel", "--url", localUrl, "--no-autoupdate"]
-    : ["tunnel", "quick-start", localUrl];
+  const { isCloudflared, args } = quickTunnelCommand(command, localUrl);
   const child = spawn(command, args, {
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -80,23 +88,31 @@ export async function startQuickTunnel(localUrl, { timeoutMs = 90_000, signal } 
   throw new Error(`temporary deployment tunnel failed${detail ? `: ${detail}` : ""}`);
 }
 
-function curlProbe(url, signal) {
-  const command = process.env.CODEGEN_HEALTHCHECK_BIN;
-  if (!command) return null;
+export function healthcheckCurlArgs(url, resolvedAddress = "") {
+  const parsed = new URL(url);
+  const args = [
+    "-sS",
+    "-L",
+    "-o",
+    "/dev/null",
+    "-w",
+    "%{http_code}",
+    "--connect-timeout",
+    "8",
+    "--max-time",
+    "12",
+  ];
+  if (resolvedAddress) {
+    const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+    args.push("--resolve", `${parsed.hostname}:${port}:${resolvedAddress}`);
+  }
+  args.push(url);
+  return args;
+}
+
+function runCurlProbe(command, url, signal, resolvedAddress = "") {
   return new Promise((resolveProbe) => {
-    const child = spawn(command, [
-      "-sS",
-      "-L",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--connect-timeout",
-      "8",
-      "--max-time",
-      "12",
-      url,
-    ], {
+    const child = spawn(command, healthcheckCurlArgs(url, resolvedAddress), {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -123,11 +139,44 @@ function curlProbe(url, signal) {
         status: Number.isInteger(status) ? status : 0,
         error: code === 0 ? "" : detail || `curl exited with code ${code}`,
         exitCode: code,
+        resolvedAddress,
       });
     });
     if (signal?.aborted) onAbort();
     else signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function dnsResolutionFailure(result) {
+  return result?.exitCode === 6 || /(?:could not|couldn't) resolve host/i.test(String(result?.error || ""));
+}
+
+async function resolveWithPublicDns(url) {
+  const hostname = new URL(url).hostname;
+  const configuredServers = String(process.env.CODEGEN_PUBLIC_DNS_SERVERS || "1.1.1.1,8.8.8.8")
+    .split(",")
+    .map((server) => server.trim())
+    .filter(Boolean);
+  if (!configuredServers.length) return [];
+  const resolver = new Resolver();
+  resolver.setServers(configuredServers);
+  const lookup = resolver.resolve4(hostname).catch(() => []);
+  return Promise.race([lookup, sleep(3_000).then(() => [])]);
+}
+
+async function curlProbe(url, signal) {
+  const command = process.env.CODEGEN_HEALTHCHECK_BIN;
+  if (!command) return null;
+  const first = await runCurlProbe(command, url, signal);
+  if (!basename(command).startsWith("curl") || !dnsResolutionFailure(first) || signal?.aborted) return first;
+  const addresses = await resolveWithPublicDns(url);
+  let fallback = first;
+  for (const address of addresses.slice(0, 2)) {
+    if (signal?.aborted) break;
+    fallback = await runCurlProbe(command, url, signal, address);
+    if (fallback.status > 0 && fallback.status < 500) return fallback;
+  }
+  return fallback.status ? fallback : first;
 }
 
 async function defaultProbe(url, signal) {

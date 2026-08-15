@@ -37,7 +37,11 @@ type RunnerJob = {
 
 const MAX_ACTIVE_PROJECTS = 2;
 const ACTIVE_PROJECT_STATUSES = ["dispatching", "building"];
-const RUNNER_SYNC_STATUSES = [...ACTIVE_PROJECT_STATUSES, "ready"];
+// Pull terminal recovery states too: the control-plane callback can be blocked
+// by an outer access gate while the authenticated Runner job still succeeds.
+// A delivered D1 row remains authoritative after Runner restarts, so it is the
+// only normal state intentionally excluded from opportunistic reconciliation.
+const RUNNER_SYNC_STATUSES = [...ACTIVE_PROJECT_STATUSES, "queued", "ready", "paused", "failed"];
 
 function validDeliveryUrl(value: unknown) {
   if (typeof value !== "string") return false;

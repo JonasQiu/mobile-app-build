@@ -1,7 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { waitForPublicUrl } from "../src/tunnel.js";
+import { healthcheckCurlArgs, quickTunnelCommand, waitForPublicUrl } from "../src/tunnel.js";
+
+test("cloudflared quick tunnels use HTTP/2 for reliable connector registration", () => {
+  const command = quickTunnelCommand("/opt/bin/cloudflared", "http://127.0.0.1:4173");
+
+  assert.equal(command.isCloudflared, true);
+  assert.deepEqual(command.args, [
+    "tunnel",
+    "--url",
+    "http://127.0.0.1:4173",
+    "--no-autoupdate",
+    "--protocol",
+    "http2",
+  ]);
+});
+
+test("health checks can pin a public DNS result without changing the delivery URL", () => {
+  const args = healthcheckCurlArgs("https://generated.example/path", "104.16.230.132");
+
+  assert.deepEqual(args.slice(-3), [
+    "--resolve",
+    "generated.example:443:104.16.230.132",
+    "https://generated.example/path",
+  ]);
+});
 
 test("public health check retries transient network and edge failures", async () => {
   const results = [

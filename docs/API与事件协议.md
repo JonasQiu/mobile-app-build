@@ -112,7 +112,7 @@ Body：
 }
 ```
 
-`mode` 可为 `continue | rerun | step`。`continue` 校验需求哈希、复用成功检查点，并从首个失败位置续修；`rerun` 清除工作区后完整执行；`step` 必须指定 `mobile-spec | implementation | build | deployment` 之一，前置检查点不足时失败，目标已成功时直接复用，目标失败时沿用该步骤错误上下文继续。`previousDeliveryUrl` 由控制面从当前项目记录传入，用于完整部署检查点复用时保留已验证 URL。返回 `202` 与异步 job；相同 `projectId` 正在运行时返回现有 job。
+`mode` 可为 `continue | rerun | step`。`continue` 校验需求哈希、复用成功检查点，并从首个失败位置续修；`rerun` 清除工作区后完整执行；`step` 必须指定 `mobile-spec | implementation | build | deployment` 之一，前置检查点不足时失败，目标已成功时直接复用，目标失败时沿用该步骤错误上下文继续。`previousDeliveryUrl` 由控制面从当前项目记录传入，用于完整部署检查点复用时保留已验证 URL。返回 `202` 与异步 job；相同 `projectId` 正在运行时返回现有 job。控制面的定时拉取覆盖 `queued/dispatching/building/ready/paused/failed`，因此主动回调被外层访问策略阻断时，Runner 的最新可信终态仍可把失败记录校正为已交付；已交付记录不依赖 Runner 内存继续存在。
 
 兼容升级前工作区：若需求文件内容一致、五份规格文档完整、manifest 存在，并且 `.next/BUILD_ID` 与 Next 可执行文件存在，Runner 会一次性写入新 marker，把现有成功结果作为 Mobile Spec、implementation、build 检查点复用。
 

@@ -12,7 +12,7 @@ Runner 必须运行在具备文件系统、子进程和外网能力的独立环�
 4. 调用本机已登录 Codex CLI，或使用 `OPENAI_API_KEY` 调用 Structured Outputs。
 5. 从中立模板写入 requirement-specific `SiteManifest` 与 `mobile-build-manifest.json`。
 6. 执行 `npm ci --no-audit --no-fund` 和 `npm run build`；失败日志最多触发三轮修复。
-7. 由 DeploymentProvider 发布，使用外部 HTTPS URL 做健康检查。
+7. 由 DeploymentProvider 发布，使用外部 HTTPS URL 做健康检查；系统 DNS 未同步时以公共 DNS 解析结果验证同一 URL，临时地址仍不可用时只更换部署隧道，不重新生成或构建。
 8. 仅当三项 evidence 为真时返回 `delivered`。
 
 运行中的 job 可通过受鉴权的暂停接口中断；Runner 会把中断信号传递到 Mobile Spec、Codex/OpenAI、npm、构建、隧道和健康检查。每个成功阶段都会写入绑定需求哈希的本地检查点。“继续”从首个未完成阶段或其失败位置开始，“重跑”清除检查点并从头执行；`step + targetStage` 对成功阶段直接复用，对失败阶段原地续修。
@@ -48,11 +48,13 @@ Runner 会分别校验 Mobile Spec、实现、构建、部署检查点；继续�
 | `CODEX_MODEL` | Codex 默认 | Codex CLI 模型覆盖 |
 | `CODEGEN_RUNNER_PORT` | `5174` | Runner 监听端口 |
 | `CODEGEN_TIMEOUT_MS` | `600000` | 一次完整生成超时 |
-| `CODEGEN_DEPLOYMENT_HEALTH_TIMEOUT_MS` | `120000` | 公网部署健康检查总等待时间；单次网络探测有独立超时并自动重试 |
+| `CODEGEN_DEPLOYMENT_HEALTH_TIMEOUT_MS` | `120000` | 公网部署健康检查总等待时间；由多个临时部署地址共享 |
+| `CODEGEN_DEPLOYMENT_TUNNEL_ATTEMPTS` | `3` | 总时限内最多创建的临时部署地址数，范围 1–5 |
+| `CODEGEN_PUBLIC_DNS_SERVERS` | `1.1.1.1,8.8.8.8` | 系统 DNS 无法解析新部署域名时使用的公共 DNS 服务器 |
 | `CODEGEN_DISABLE_CALLBACK` | 未设置 | `1` 时由控制站主动拉取状态 |
 | `CODEGEN_DEPLOYMENT_PROVIDER` | 无 | 部署 Provider；当前验收值可为 `cloudflare-quick-tunnel` |
 | `CODEGEN_TUNNEL_BIN` | 无 | Quick Tunnel 使用的 `cloudflared` 路径 |
-| `CODEGEN_HEALTHCHECK_BIN` | 无 | 可选系统级健康检查命令（当前使用 curl）；DNS、连接与 HTTP 失败会进入 Runner 实时消息 |
+| `CODEGEN_HEALTHCHECK_BIN` | 无 | 可选系统级健康检查命令（当前使用 curl）；DNS、连接与 HTTP 失败会进入 Runner 实时消息，公共 DNS 仍无法通过时自动换址 |
 
 ## CLI 与测试
 

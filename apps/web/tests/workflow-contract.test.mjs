@@ -135,6 +135,7 @@ test("running projects can be paused and terminal projects can continue or rerun
   assert.match(jobsRoute, /targetStage/);
   assert.match(deliveryRoute, /body\?\.status === "paused"/);
   assert.match(projectsRoute, /job\.status === "paused"/);
+  assert.match(projectsRoute, /RUNNER_SYNC_STATUSES = \[\.\.\.ACTIVE_PROJECT_STATUSES, "queued", "ready", "paused", "failed"\]/);
 });
 
 test("successful stages are reusable, individually executable, and expose Markdown artifacts", async () => {

@@ -25,13 +25,13 @@ Mobile Web（OpenAI Sites + D1）
 - 完整原始需求保存，不做关键词分类或固定业务模板匹配。
 - 历史记录点击进入项目详情，恢复需求、状态、消息和交付入口。
 - 六阶段实时进度：需求、Mobile Spec、Codex、构建、部署、完成。
-- Runner 百分比、当前 message 与最近消息流，每 15 秒由服务端可信同步。
+- Runner 百分比、当前 message 与最近消息流，每 15 秒由服务端可信同步；外层访问策略阻断主动回调时，失败/暂停记录也会从 Runner 终态自动校正。
 - 输入框上方提供“继续、重跑、规格、实现、构建、部署”快捷按钮；成功单步直接复用，失败单步从该步骤的失败位置续修。
 - 真实暂停会向 Runner 发送中断信号并终止当前 Codex、Mobile Spec、安装、构建或健康检查子进程。
 - 成功步骤写入需求哈希检查点；Mobile Spec 额外记录 Proposal、Design、Tasks 子阶段，Codex/构建记录最近诊断。“继续”从首个未完成或失败位置开始，“重跑”清除旧检查点并完整执行。升级前已有的完整规格、manifest 和生产构建会在首次读取时自动迁移为检查点。
 - Mobile Spec 的 Proposal、Spec、Design、Review、Tasks 以 Markdown 预览；实现清单、构建日志和部署证据也按步骤查看。
 - Mobile Spec 是硬门禁；缺少 artifacts 或 gate 失败时停止。
-- `npm ci`、`next build`、跨任务保留真实错误日志的 Codex 定向修复，以及外部 HTTPS 健康检查；修复 manifest 时会清理旧清单遗留的路由文件。
+- `npm ci`、`next build`、跨任务保留真实错误日志的 Codex 定向修复，以及外部 HTTPS 健康检查；Quick Tunnel 使用 HTTP/2，系统 DNS 未同步时以公共 DNS 结果完成同一 URL 的 HTTPS 验证，地址或连接仍不可用时在总时限内自动换址，不重跑已成功的规格、实现和构建。修复 manifest 时会清理旧清单遗留的路由文件。
 - 客户端无权把项目标记为已交付或写入 URL。
 
 ## 当前边界

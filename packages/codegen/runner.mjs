@@ -37,6 +37,14 @@ const configuredPort = process.env.CODEGEN_RUNNER_PORT;
 const PORT = configuredPort === undefined ? 5174 : Number(configuredPort);
 const GENERATION_TIMEOUT_MS = Number(process.env.CODEGEN_TIMEOUT_MS) || 600_000;
 const DEPLOYMENT_HEALTH_TIMEOUT_MS = Math.max(30_000, Number(process.env.CODEGEN_DEPLOYMENT_HEALTH_TIMEOUT_MS) || 120_000);
+const configuredTunnelAttempts = Number(process.env.CODEGEN_DEPLOYMENT_TUNNEL_ATTEMPTS);
+const DEPLOYMENT_TUNNEL_ATTEMPTS = Number.isFinite(configuredTunnelAttempts) && configuredTunnelAttempts > 0
+  ? Math.min(5, Math.floor(configuredTunnelAttempts))
+  : 3;
+const DEPLOYMENT_HEALTH_ATTEMPT_TIMEOUT_MS = Math.max(
+  10_000,
+  Math.floor(DEPLOYMENT_HEALTH_TIMEOUT_MS / DEPLOYMENT_TUNNEL_ATTEMPTS),
+);
 const RUNNER_TOKEN = process.env.CODEX_RUNNER_TOKEN || "";
 const CALLBACK_TOKEN = process.env.RUNNER_CALLBACK_TOKEN || "";
 const jobs = new Map();
@@ -381,28 +389,63 @@ async function executeJob(job, controller) {
     await callback(job.callbackUrl, { status: "building", stage: "deployment" }, signal);
     throwIfPaused(signal);
     stopPreview(slug);
-    const preview = await startPreview(result.outDir);
-    throwIfPaused(signal);
-    deployment = await deployPreview(preview, signal);
-    throwIfPaused(signal);
-    previews.set(slug, deployment);
-    const url = deployment.url;
-    await waitForPublicUrl(url, {
-      timeoutMs: DEPLOYMENT_HEALTH_TIMEOUT_MS,
-      isAlive: deployment.isAlive,
-      onAttempt: ({ attempt, status, error }) => {
-        if (signal.aborted || jobs.get(job.projectId)?.id !== job.id) return;
-        const detail = status ? `HTTP ${status}` : error || "暂未收到公网响应";
-        const passed = status > 0 && status < 500;
+    let url = "";
+    for (let deploymentAttempt = 1; deploymentAttempt <= DEPLOYMENT_TUNNEL_ATTEMPTS; deploymentAttempt += 1) {
+      throwIfPaused(signal);
+      updateJob(job.projectId, {
+        status: "running",
+        stage: "deployment",
+        progress: Math.min(96, 91 + deploymentAttempt),
+      }, `正在创建公网部署地址（${deploymentAttempt}/${DEPLOYMENT_TUNNEL_ATTEMPTS}）`);
+      const preview = await startPreview(result.outDir);
+      try {
+        throwIfPaused(signal);
+        deployment = await deployPreview(preview, signal);
+        throwIfPaused(signal);
+        previews.set(slug, deployment);
+        url = deployment.url;
         updateJob(job.projectId, {
           status: "running",
           stage: "deployment",
-          progress: passed ? 98 : Math.min(97, 92 + attempt),
-          kind: passed ? "progress" : "warning",
-        }, `公网健康检查第 ${attempt} 次：${detail}${passed ? "，检查通过" : "，等待后重试"}`);
-      },
-      signal,
-    });
+          progress: Math.min(97, 92 + deploymentAttempt),
+        }, `部署地址 ${deploymentAttempt}/${DEPLOYMENT_TUNNEL_ATTEMPTS} 已建立，正在执行公网健康检查`);
+        await waitForPublicUrl(url, {
+          timeoutMs: DEPLOYMENT_HEALTH_ATTEMPT_TIMEOUT_MS,
+          isAlive: deployment.isAlive,
+          onAttempt: ({ attempt, status, error }) => {
+            if (signal.aborted || jobs.get(job.projectId)?.id !== job.id) return;
+            const detail = status ? `HTTP ${status}` : error || "暂未收到公网响应";
+            const passed = status > 0 && status < 500;
+            updateJob(job.projectId, {
+              status: "running",
+              stage: "deployment",
+              progress: passed ? 98 : Math.min(97, 92 + deploymentAttempt + Math.floor(attempt / 4)),
+              kind: passed ? "progress" : "warning",
+            }, `部署地址 ${deploymentAttempt}/${DEPLOYMENT_TUNNEL_ATTEMPTS} · 公网健康检查第 ${attempt} 次：${detail}${passed ? "，检查通过" : "，等待后重试"}`);
+          },
+          signal,
+        });
+        break;
+      } catch (error) {
+        const failedDeployment = deployment;
+        if (failedDeployment) {
+          if (previews.get(slug) === failedDeployment) previews.delete(slug);
+          failedDeployment.stop();
+          deployment = null;
+        } else {
+          preview.stop();
+        }
+        throwIfPaused(signal);
+        if (deploymentAttempt >= DEPLOYMENT_TUNNEL_ATTEMPTS) throw error;
+        const detail = error instanceof Error ? error.message : String(error);
+        updateJob(job.projectId, {
+          status: "running",
+          stage: "deployment",
+          progress: Math.min(97, 92 + deploymentAttempt),
+          kind: "warning",
+        }, `部署地址 ${deploymentAttempt}/${DEPLOYMENT_TUNNEL_ATTEMPTS} 未完成公网注册：${detail.slice(0, 180)}；正在自动更换地址，已成功的规格、实现和构建不会重跑`);
+      }
+    }
     throwIfPaused(signal);
     const evidence = { mobileSpecPassed: true, buildPassed: true, deployPassed: true };
     await writeDeploymentEvidence(outDir, { url, evidence, checkedAt: new Date().toISOString() });
