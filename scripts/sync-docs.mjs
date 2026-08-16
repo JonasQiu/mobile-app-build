@@ -16,13 +16,16 @@ function yes(source, pattern) {
   return pattern.test(source) ? "已实现" : "未检测到";
 }
 
-const [app, projects, projectDelete, jobs, pause, artifacts, runner, generate, checkpoints, specWorkflow, manifest, serverAuth] = await Promise.all([
+const [app, projects, projectDelete, jobs, pause, artifacts, runnerHeartbeat, runnerRecover, runnerEndpoint, runner, generate, checkpoints, specWorkflow, manifest, serverAuth] = await Promise.all([
   text("apps/web/app/MobileBuildApp.tsx"),
   text("apps/web/app/api/projects/route.ts"),
   text("apps/web/app/api/projects/[projectId]/route.ts"),
   text("apps/web/app/api/v1/projects/[projectId]/jobs/route.ts"),
   text("apps/web/app/api/v1/projects/[projectId]/pause/route.ts"),
   text("apps/web/app/api/v1/projects/[projectId]/artifacts/[stage]/route.ts"),
+  text("apps/web/app/api/v1/runner/heartbeat/route.ts"),
+  text("apps/web/app/api/v1/runner/recover/route.ts"),
+  text("apps/web/app/lib/runner-endpoint.ts"),
   text("packages/codegen/runner.mjs"),
   text("packages/codegen/src/generate.js"),
   text("packages/codegen/src/checkpoints.js"),
@@ -45,6 +48,7 @@ const facts = [
   ["产物预览", yes(app + artifacts + checkpoints, /MarkdownPreview[\s\S]*readStageArtifacts/), "步骤文件可独立读取，md 产物按 Markdown 渲染"],
   ["可信状态同步", yes(projects, /executionEvents/), "控制站服务端轮询 Runner，不接受浏览器终态"],
   ["受信任派发", yes(jobs, /CODEX_RUNNER_TOKEN/), "服务端 Bearer token 派发"],
+  ["Runner 自动换址", yes(app + runnerHeartbeat + runnerRecover + runnerEndpoint + runner, /修复连接[\s\S]*registerRunnerEndpoint[\s\S]*requestRunnerRotation[\s\S]*maintainRunnerEndpoint/), "Runner 心跳登记当前地址；隧道失效自动轮换，用户也可点击修复连接并重派原任务"],
   ["Runner message 流", yes(runner, /function reportProgress\(projectId, event, jobId\)/), "progress/message/events，最近 24 条"],
   ["Mobile Spec 硬门禁", yes(generate, /Mobile Spec workflow is required/), "缺少或失败时停止生成"],
   ["交付 evidence", yes(runner, /mobileSpecPassed: true[\s\S]*buildPassed: true[\s\S]*deployPassed: true/), "三项证据齐全才 delivered"],
@@ -52,7 +56,7 @@ const facts = [
   ["D1 persistence", yes(serverAuth, /env\.DB/), "项目、会话与历史记录持久化"],
 ];
 
-const sources = [app, projects, projectDelete, jobs, pause, artifacts, runner, generate, checkpoints, specWorkflow, manifest, serverAuth].join("\n");
+const sources = [app, projects, projectDelete, jobs, pause, artifacts, runnerHeartbeat, runnerRecover, runnerEndpoint, runner, generate, checkpoints, specWorkflow, manifest, serverAuth].join("\n");
 const digest = createHash("sha256").update(sources).digest("hex").slice(0, 16);
 const body = `# 实现状态快照
 
@@ -69,7 +73,7 @@ ${facts.map(([name, status, detail]) => `| ${name} | ${status} | ${detail} |`).j
 ## 固定边界
 
 - Runner job/message/events 当前为内存状态，不具备重启恢复。
-- Cloudflare Quick Tunnel 只用于开发与验收，不是生产 DeploymentProvider。
+- Runner 控制通道的 Quick Tunnel 可自动登记与轮换，但仍无 SLA；生成站点的 Quick Tunnel 也只用于开发与验收，不是生产 DeploymentProvider。
 - 检查点与产物当前持久化在 Runner 本地工作区；Runner job/message/events 仍未进入共享数据库。
 - Desktop Agent、源码 ZIP、跨 Runner 迁移和进程重启后自动接管执行中任务当前未实现。
 - 浏览器无权写入 delivered 或部署 URL。

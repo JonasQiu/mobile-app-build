@@ -50,6 +50,14 @@ export async function ensureDatabase() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_projects_owner_updated ON projects(owner_user_id, updated_at DESC)"),
+    db.prepare(`CREATE TABLE IF NOT EXISTS runner_endpoints (
+      id TEXT PRIMARY KEY,
+      endpoint TEXT NOT NULL,
+      instance_id TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      rotate_requested_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
   ]);
   await db.prepare(`INSERT INTO users (
     id, username, username_normalized, password_hash, password_salt, password_iterations, status

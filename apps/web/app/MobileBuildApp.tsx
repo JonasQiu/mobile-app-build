@@ -25,6 +25,12 @@ type ArtifactFile = { name: string; label: string; format: "markdown" | "json" |
 type ArtifactResponse = { stage: ExecutionStage; checkpointed: boolean; artifacts: ArtifactFile[] };
 
 const POLL_INTERVAL_MS = 15_000;
+const RECOVERABLE_RUNNER_CODES = new Set([
+  "EXECUTOR_OFFLINE",
+  "EXECUTOR_CONFIG_INVALID",
+  "EXECUTOR_UNHEALTHY",
+  "EXECUTOR_UNREACHABLE",
+]);
 
 const EXAMPLES = [
   "做一个极简的个人记账网站，可按月份查看支出",
@@ -195,6 +201,9 @@ export function MobileBuildApp() {
   const [activeProjectId, setActiveProjectId] = useState("");
   const [genProgress, setGenProgress] = useState("");
   const [genError, setGenError] = useState("");
+  const [runnerIssueCode, setRunnerIssueCode] = useState("");
+  const [repairingRunner, setRepairingRunner] = useState(false);
+  const [lastExecutionAction, setLastExecutionAction] = useState<{ mode: ExecutionMode; targetStage?: ExecutionStage }>({ mode: "continue" });
   const [previewUrl, setPreviewUrl] = useState("");
   const [deletingProjectId, setDeletingProjectId] = useState("");
   const [pausingProjectId, setPausingProjectId] = useState("");
@@ -357,6 +366,8 @@ export function MobileBuildApp() {
 
   async function runProject(projectId: string, action: { mode: ExecutionMode; targetStage?: ExecutionStage } = { mode: "continue" }) {
     if (!projectId) return;
+    setLastExecutionAction(action);
+    setRunnerIssueCode("");
     const previousProject = projects.find((item) => item.id === projectId);
     const optimisticStage = action.targetStage || (action.mode === "rerun" ? "mobile-spec" : nextExecutionStage(previousProject));
     setGenError("");
@@ -378,6 +389,7 @@ export function MobileBuildApp() {
       });
       const data = await readJsonResponse<{ job?: { id: string; status?: string; stage?: string; currentStage?: string; url?: string; progress?: number; message?: string; checkpoints?: ExecutionStage[] }; error?: string; code?: string }>(response, "Codex 任务派发失败");
       if (!response.ok || !data.job) {
+        setRunnerIssueCode(typeof data.code === "string" ? data.code : "");
         if (data.code !== "EXECUTOR_DISPATCH_UNKNOWN") {
           setProjects((items) => items.map((item) => item.id === projectId ? {
             ...(previousProject || item),
@@ -427,6 +439,40 @@ export function MobileBuildApp() {
 
   function handleGenerate() {
     void runProject(activeProjectId, { mode: "continue" });
+  }
+
+  async function repairRunnerConnection() {
+    if (!activeProjectId || repairingRunner) return;
+    setRepairingRunner(true);
+    setGenError("");
+    setGenProgress("正在检测 Runner 并请求自动更换连接地址…");
+    try {
+      const response = await fetch("/api/v1/runner/recover", { method: "POST", headers: { accept: "application/json" } });
+      const initial = await readJsonResponse<{ online?: boolean; recovering?: boolean; error?: string; message?: string }>(response, "连接修复失败");
+      if (!response.ok && !initial.recovering) throw new Error(initial.error || "连接修复失败");
+      if (!initial.online) {
+        let recovered = false;
+        for (let attempt = 1; attempt <= 20; attempt += 1) {
+          setGenProgress(`正在等待 Runner 新地址登记（${attempt}/20）…`);
+          await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+          const statusResponse = await fetch("/api/v1/runner/recover", { headers: { accept: "application/json" } });
+          const current = await readJsonResponse<{ online?: boolean; error?: string }>(statusResponse, "连接状态读取失败");
+          if (!statusResponse.ok) throw new Error(current.error || "连接状态读取失败");
+          if (current.online) {
+            recovered = true;
+            break;
+          }
+        }
+        if (!recovered) throw new Error("自动更换地址尚未完成，请确认本机 Runner 服务正在运行后再次点击修复连接");
+      }
+      setRunnerIssueCode("");
+      setGenProgress("Runner 新连接已恢复，正在重新派发原任务…");
+      await runProject(activeProjectId, lastExecutionAction);
+    } catch (error) {
+      setGenError(error instanceof Error ? error.message : "连接修复失败");
+    } finally {
+      setRepairingRunner(false);
+    }
   }
 
   async function openArtifacts(stage: ExecutionStage) {
@@ -489,6 +535,7 @@ export function MobileBuildApp() {
   const liveMessage = activeProject?.executionMessage || genProgress || (deliveryUrl ? "部署和健康检查均已通过" : "等待开始真实构建");
   const liveEvents = activeProject?.executionEvents?.filter((event) => event.message).slice(-6).reverse() ?? [];
   const capacityFull = executionCapacity.active >= executionCapacity.max;
+  const runnerRecoverable = RECOVERABLE_RUNNER_CODES.has(runnerIssueCode);
   const activeArtifact = artifactData?.artifacts.find((artifact) => artifact.name === activeArtifactName) || artifactData?.artifacts[0] || null;
 
   if (authState === "checking") {
@@ -562,7 +609,7 @@ export function MobileBuildApp() {
                 <p className="console-current">{liveMessage}</p>
                 {liveEvents.length ? <ol>{liveEvents.map((event, index) => <li className={event.kind === "warning" ? "warning" : ""} key={event.id || `${event.at}-${index}`}><time>{formatEventTime(event.at)}</time><span><b>{STAGE_LABELS[event.stage || ""] || event.stage || "执行器"}</b>{event.message}</span></li>)}</ol> : <p className="console-empty">开始执行后，这里会展示 Mobile Spec 门禁、Codex 源码生成、文件写入、构建修复和部署健康检查的真实消息。</p>}
               </section>
-              {genError ? <pre className="gen-error" role="alert">{genError}</pre> : null}
+              {genError ? <div className="runner-error-panel"><pre className="gen-error" role="alert">{genError}</pre>{runnerRecoverable ? <button className="repair-runner-button" type="button" disabled={repairingRunner} onClick={() => void repairRunnerConnection()}>{repairingRunner ? "修复中…" : "修复连接"}<Icon name="refresh" /></button> : null}</div> : null}
               <div className="plan-actions">
                 {generating ? <button className="primary-button pause-button" onClick={() => void pauseProject(activeProjectId)} disabled={activeProject?.status !== "building" || pausingProjectId === activeProjectId}>{activeProject?.status === "dispatching" ? "正在派发" : pausingProjectId === activeProjectId ? "暂停中…" : "暂停执行"}<Icon name="pause" /></button> : null}
                 {!generating && deliveryUrl ? <a className="primary-button" href={deliveryUrl} target="_blank" rel="noreferrer">打开交付页面<Icon name="external" /></a> : null}

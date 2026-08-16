@@ -1,4 +1,5 @@
 import { getD1, jsonError, requireSession } from "../../../../../lib/server-auth";
+import { resolveRunnerEndpoint, runnerUrls } from "../../../../../lib/runner-endpoint";
 
 type ProjectRow = { id: string; status: string; prompt: string; currentStage: string | null; previewUrl: string | null };
 type ExecutionMode = "continue" | "rerun" | "step";
@@ -8,21 +9,6 @@ const EXECUTION_STAGES: ExecutionStage[] = ["mobile-spec", "implementation", "bu
 
 const MAX_ACTIVE_PROJECTS = 2;
 const RUNNER_REQUEST_TIMEOUT_MS = 10_000;
-
-function resolveRunnerUrls(value: string) {
-  try {
-    const jobsUrl = new URL(value);
-    if (!["http:", "https:"].includes(jobsUrl.protocol)) return null;
-    jobsUrl.pathname = jobsUrl.pathname.replace(/\/+$/, "");
-    if (!jobsUrl.pathname.endsWith("/jobs")) {
-      jobsUrl.pathname = `${jobsUrl.pathname}/jobs`.replace(/\/{2,}/g, "/");
-    }
-    const healthUrl = new URL("/health", jobsUrl);
-    return { jobsUrl: jobsUrl.toString(), healthUrl: healthUrl.toString() };
-  } catch {
-    return null;
-  }
-}
 
 async function fetchRunner(url: string, init?: RequestInit) {
   const controller = new AbortController();
@@ -49,17 +35,17 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
   const project = await getD1().prepare(`SELECT id, status, prompt, current_stage AS currentStage, preview_url AS previewUrl FROM projects
     WHERE id = ? AND owner_user_id = ? LIMIT 1`).bind(projectId, user.id).first<ProjectRow>();
   if (!project) return jsonError("项目不存在", 404);
-  const endpoint = process.env.CODEX_RUNNER_URL;
   const token = process.env.CODEX_RUNNER_TOKEN;
-  if (!endpoint || !token || !process.env.RUNNER_CALLBACK_TOKEN) {
+  if (!token || !process.env.RUNNER_CALLBACK_TOKEN) {
     return Response.json({
       error: "Codex Runner 正在维护，当前不会启动或伪造任务，请稍后重试",
       code: "EXECUTOR_OFFLINE",
       retryable: false,
     }, { status: 503, headers: { "cache-control": "no-store" } });
   }
-  const runnerUrls = resolveRunnerUrls(endpoint);
-  if (!runnerUrls) {
+  const endpoint = await resolveRunnerEndpoint();
+  const resolvedRunnerUrls = endpoint ? runnerUrls(endpoint) : null;
+  if (!resolvedRunnerUrls) {
     return Response.json({
       error: "Codex Runner 地址配置无效，任务尚未启动",
       code: "EXECUTOR_CONFIG_INVALID",
@@ -68,7 +54,7 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
   }
 
   try {
-    const healthResponse = await fetchRunner(runnerUrls.healthUrl, {
+    const healthResponse = await fetchRunner(resolvedRunnerUrls.healthUrl, {
       headers: { accept: "application/json" },
     });
     const health = healthResponse.headers.get("content-type")?.includes("application/json")
@@ -128,7 +114,7 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
 
   let response: Response;
   try {
-    response = await fetchRunner(runnerUrls.jobsUrl, {
+    response = await fetchRunner(resolvedRunnerUrls.jobsUrl, {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,

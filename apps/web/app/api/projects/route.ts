@@ -1,4 +1,5 @@
 import { getD1, jsonError, requireSession } from "../../lib/server-auth";
+import { resolveRunnerEndpoint, runnerUrls } from "../../lib/runner-endpoint";
 
 type ProjectRow = {
   id: string;
@@ -57,10 +58,12 @@ function validDeliveryUrl(value: unknown) {
 }
 
 async function syncRunnerState(userId: string, projects: ProjectRow[]) {
-  const endpoint = process.env.CODEX_RUNNER_URL;
+  const endpoint = await resolveRunnerEndpoint();
   const token = process.env.CODEX_RUNNER_TOKEN;
   if (!endpoint || !token) return;
-  const origin = new URL(endpoint).origin;
+  const urls = runnerUrls(endpoint);
+  if (!urls) return;
+  const origin = urls.origin;
   await Promise.all(projects.filter((project) => RUNNER_SYNC_STATUSES.includes(project.status)).map(async (project) => {
     try {
       const response = await fetch(`${origin}/jobs/${encodeURIComponent(project.id)}`, {

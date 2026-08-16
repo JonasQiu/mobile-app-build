@@ -766,6 +766,45 @@ button {
   margin-top: 19px;
 }
 
+.runner-error-panel {
+  align-items: stretch;
+  background: rgba(255,123,120,.06);
+  border: 1px solid rgba(255,123,120,.18);
+  border-radius: 14px;
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+}
+
+.gen-error {
+  color: var(--danger);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.55;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.repair-runner-button {
+  align-items: center;
+  align-self: start;
+  background: rgba(255,255,255,.075);
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 11px;
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 760;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 12px;
+  width: fit-content;
+}
+
+.repair-runner-button:disabled { cursor: wait; opacity: .55; }
+
 .build-card {
   padding: 18px 0 0;
 }

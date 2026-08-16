@@ -267,6 +267,20 @@ queued → dispatching → building → ready | paused | failed | delivered
 
 **结果：** 暂停是执行层真实停止，而不是界面上的状态切换。
 
+### 5.7 Runner 临时地址反复失效
+
+**问题：** 控制面最初直接读取环境变量中的 Quick Tunnel 地址。Runner 或隧道重启后域名会变化，旧地址无法解析，导致任务在派发前持续返回“Runner 当前不可用”。
+
+**解决思路：**
+
+- Runner 为控制 API 自动维护独立公网隧道，并每 10 秒向控制面登记最新地址；
+- D1 保存当前 endpoint、Runner 实例编号、心跳时间和换址请求；
+- 控制面优先使用 45 秒内的心跳地址，环境变量只作为冷启动回退；
+- 隧道进程退出时 Runner 自动重建；连接类错误时页面展示“修复连接”；
+- 用户点击后控制面发出换址指令，页面轮询新地址并自动按原模式重新派发任务。
+
+**结果：** 临时域名变化不再需要人工修改线上环境变量，同时仍明确 Quick Tunnel 不具备生产 SLA。
+
 ## 6. 安全与可信设计
 
 - 控制站与 Runner 使用独立 Bearer Token；
@@ -277,7 +291,7 @@ queued → dispatching → building → ready | paused | failed | delivered
 - 生成文件经过路径、扩展名和路由校验；
 - 浏览器无权写入最终状态和交付 URL；
 - Secret 只存在于受控环境变量，不进入日志、文档和 Git；
-- 当前已建立 44 项 Runner 测试、12 项 Web 契约测试，并执行 ESLint、生产构建和文档检查。
+- 当前已建立 44 项 Runner 测试、13 项 Web 契约测试，并执行 ESLint、生产构建和文档检查。
 
 ## 7. 当前边界
 
@@ -286,7 +300,7 @@ queued → dispatching → building → ready | paused | failed | delivered
 - Runner 当前为常驻 Node 进程，不是弹性 Cloud Runner；
 - 执行事件保存在 Runner 内存，进程重启后无法恢复正在运行的 Job；
 - 成功检查点与产物保存在 Runner 本地工作区，尚未进入共享对象存储；
-- Quick Tunnel 没有固定域名和 SLA，只适合开发与验收；
+- Runner 控制地址可以自动轮换，但 Quick Tunnel 仍没有固定域名和 SLA，只适合开发与验收；
 - 尚未实现正式计费、租户配额、取消、审计查询和跨 Runner 接管。
 
 这些边界也明确了项目从当前可用版本走向规模化生产平台时需要补齐的能力。

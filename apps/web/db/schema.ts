@@ -39,3 +39,12 @@ export const projects = sqliteTable("projects", {
 }, (table) => [
   index("idx_projects_owner_updated").on(table.ownerUserId, table.updatedAt),
 ]);
+
+export const runnerEndpoints = sqliteTable("runner_endpoints", {
+  id: text("id").primaryKey(),
+  endpoint: text("endpoint").notNull(),
+  instanceId: text("instance_id").notNull(),
+  lastSeenAt: text("last_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  rotateRequestedAt: text("rotate_requested_at"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});

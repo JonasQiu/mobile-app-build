@@ -1,4 +1,5 @@
 import { getD1, jsonError, requireSession } from "../../../../../../lib/server-auth";
+import { resolveRunnerEndpoint, runnerUrls } from "../../../../../../lib/runner-endpoint";
 
 const STAGES = ["mobile-spec", "implementation", "build", "deployment"];
 const RUNNER_TIMEOUT_MS = 12_000;
@@ -13,15 +14,16 @@ export async function GET(request: Request, context: RouteContext<"/api/v1/proje
     WHERE id = ? AND owner_user_id = ? LIMIT 1`).bind(projectId, user.id).first<{ id: string; prompt: string }>();
   if (!project) return jsonError("项目不存在", 404);
 
-  const endpoint = process.env.CODEX_RUNNER_URL;
+  const endpoint = await resolveRunnerEndpoint();
   const token = process.env.CODEX_RUNNER_TOKEN;
   if (!endpoint || !token) return jsonError("Codex Runner 当前不可用，无法读取产物", 503);
+  const urls = runnerUrls(endpoint);
+  if (!urls) return jsonError("Codex Runner 地址配置无效，无法读取产物", 503);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), RUNNER_TIMEOUT_MS);
   try {
-    const origin = new URL(endpoint).origin;
-    const response = await fetch(`${origin}/jobs/${encodeURIComponent(project.id)}/artifacts/${encodeURIComponent(stage)}`, {
+    const response = await fetch(`${urls.origin}/jobs/${encodeURIComponent(project.id)}/artifacts/${encodeURIComponent(stage)}`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ requirement: project.prompt }),

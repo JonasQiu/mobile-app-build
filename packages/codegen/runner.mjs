@@ -51,6 +51,12 @@ const jobs = new Map();
 const jobControllers = new Map();
 const jobExecutions = new Map();
 const previews = new Map();
+const RUNNER_INSTANCE_ID = `runner_${crypto.randomUUID()}`;
+const CONTROL_PLANE_URL = String(process.env.CODEGEN_CONTROL_PLANE_URL || "").trim();
+const AUTO_PUBLIC_TUNNEL = process.env.CODEGEN_AUTO_PUBLIC_TUNNEL === "1";
+const RUNNER_HEARTBEAT_INTERVAL_MS = Math.max(5_000, Number(process.env.CODEGEN_RUNNER_HEARTBEAT_INTERVAL_MS) || 10_000);
+let runnerEndpointTunnel = null;
+let shuttingDown = false;
 
 const PROGRESS = {
   queued: [4, "任务已进入执行队列"],
@@ -161,6 +167,69 @@ function withTimeout(promise, ms, label) {
 function send(res, status, body) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
   res.end(JSON.stringify(body));
+}
+
+const delay = (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+
+function controlPlaneEndpoint(pathname) {
+  if (!CONTROL_PLANE_URL) return null;
+  try {
+    return new URL(pathname, CONTROL_PLANE_URL).toString();
+  } catch {
+    return null;
+  }
+}
+
+async function heartbeatRunnerEndpoint(endpoint) {
+  const url = controlPlaneEndpoint("/api/v1/runner/heartbeat");
+  if (!url || !CALLBACK_TOKEN) throw new Error("Runner control-plane registration is not configured");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  const headers = { authorization: `Bearer ${CALLBACK_TOKEN}`, "content-type": "application/json", accept: "application/json" };
+  if (process.env.SITES_BYPASS_TOKEN) headers["OAI-Sites-Authorization"] = `Bearer ${process.env.SITES_BYPASS_TOKEN}`;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ endpoint, instanceId: RUNNER_INSTANCE_ID }),
+      signal: controller.signal,
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || `Runner endpoint registration failed (HTTP ${response.status})`);
+    return Boolean(body?.rotate);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function maintainRunnerEndpoint(port) {
+  const localUrl = `http://127.0.0.1:${port}`;
+  while (!shuttingDown) {
+    try {
+      if (!runnerEndpointTunnel?.isAlive()) {
+        runnerEndpointTunnel?.stop();
+        runnerEndpointTunnel = await startQuickTunnel(localUrl);
+        console.log(`runner public endpoint registered at ${runnerEndpointTunnel.url}`);
+      }
+      const endpoint = new URL("/jobs", runnerEndpointTunnel.url).toString();
+      const rotate = await heartbeatRunnerEndpoint(endpoint);
+      if (rotate) {
+        console.log("runner endpoint rotation requested by control plane");
+        runnerEndpointTunnel.stop();
+        runnerEndpointTunnel = null;
+        await delay(500);
+        continue;
+      }
+      await delay(RUNNER_HEARTBEAT_INTERVAL_MS);
+    } catch (error) {
+      if (shuttingDown) break;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`runner endpoint maintenance failed: ${message}`);
+      runnerEndpointTunnel?.stop();
+      runnerEndpointTunnel = null;
+      await delay(3_000);
+    }
+  }
 }
 
 function readBody(req) {
@@ -667,6 +736,8 @@ const server = createServer(async (req, res) => {
 });
 
 function shutdown() {
+  shuttingDown = true;
+  runnerEndpointTunnel?.stop();
   for (const controller of jobControllers.values()) controller.abort(new DOMException("runner shutting down", "AbortError"));
   for (const preview of previews.values()) preview.stop();
   server.close(() => process.exit(0));
@@ -679,4 +750,9 @@ server.listen(PORT, "127.0.0.1", () => {
   const address = server.address();
   const listeningPort = typeof address === "object" && address ? address.port : PORT;
   console.log(`trusted codegen runner listening on http://127.0.0.1:${listeningPort}`);
+  if (AUTO_PUBLIC_TUNNEL && CONTROL_PLANE_URL) {
+    void maintainRunnerEndpoint(listeningPort).catch((error) => {
+      console.error(`runner endpoint loop stopped: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
 });

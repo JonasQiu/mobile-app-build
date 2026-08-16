@@ -12,6 +12,7 @@
 - 交付完成后从详情打开独立 HTTPS 页面。
 - 失败项目显示真实失败信息；“继续”或对应单步会沿用 Runner 保存的失败上下文续修，“重跑”才清空并从头执行。
 - 已成功的单步点击不会重新构建；已有交付检查点时保留原交付 URL。
+- Runner 临时入口通过心跳登记到 D1；连接错误时展示“修复连接”，自动换址后重派原任务。
 
 ## 安全边界
 
@@ -45,7 +46,7 @@ node --test tests/*.test.mjs
 
 | 变量 | 用途 |
 |---|---|
-| `CODEX_RUNNER_URL` | Runner 的 HTTPS `/jobs` 地址 |
+| `CODEX_RUNNER_URL` | Runner 的 HTTPS `/jobs` 冷启动回退地址；心跳登记地址优先 |
 | `CODEX_RUNNER_TOKEN` | 控制站调用 Runner 的 Bearer token |
 | `RUNNER_CALLBACK_TOKEN` | 兼容可信回调接口；当前线上主要使用主动拉取 |
 

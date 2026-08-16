@@ -33,7 +33,7 @@ test("the browser dispatches a server-side job and never calls localhost", async
   await assert.rejects(access(new URL("app/api/generate/route.ts", root)));
   await access(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root));
   const jobsRoute = await readFile(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root), "utf8");
-  assert.match(jobsRoute, /CODEX_RUNNER_URL/);
+  assert.match(jobsRoute, /resolveRunnerEndpoint/);
   assert.match(jobsRoute, /CODEX_RUNNER_TOKEN/);
   assert.match(jobsRoute, /healthUrl/);
   assert.match(jobsRoute, /EXECUTOR_UNHEALTHY/);
@@ -42,6 +42,20 @@ test("the browser dispatches a server-side job and never calls localhost", async
   assert.doesNotMatch(jobsRoute, /callbackToken.*JSON\.stringify/s);
   await access(new URL("package.json", codegen));
   await access(new URL("src/generate.js", codegen));
+});
+
+test("expired runner endpoints can self-register, rotate, and be repaired from the UI", async () => {
+  const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
+  const endpoint = await readFile(new URL("app/lib/runner-endpoint.ts", root), "utf8");
+  const heartbeat = await readFile(new URL("app/api/v1/runner/heartbeat/route.ts", root), "utf8");
+  const recover = await readFile(new URL("app/api/v1/runner/recover/route.ts", root), "utf8");
+  assert.match(app, /修复连接/);
+  assert.match(app, /\/api\/v1\/runner\/recover/);
+  assert.match(endpoint, /runner_endpoints/);
+  assert.match(endpoint, /rotate_requested_at/);
+  assert.match(heartbeat, /RUNNER_CALLBACK_TOKEN/);
+  assert.match(heartbeat, /registerRunnerEndpoint/);
+  assert.match(recover, /requestRunnerRotation/);
 });
 
 test("only a trusted evidence callback may mark a project delivered", async () => {
@@ -62,7 +76,7 @@ test("only a trusted evidence callback may mark a project delivered", async () =
 
 test("project polling synchronizes trusted runner evidence before delivery", async () => {
   const projectsRoute = await readFile(new URL("app/api/projects/route.ts", root), "utf8");
-  assert.match(projectsRoute, /CODEX_RUNNER_URL/);
+  assert.match(projectsRoute, /resolveRunnerEndpoint/);
   assert.match(projectsRoute, /jobs\/\$\{encodeURIComponent\(project\.id\)\}/);
   assert.match(projectsRoute, /mobileSpecPassed/);
   assert.match(projectsRoute, /buildPassed/);
