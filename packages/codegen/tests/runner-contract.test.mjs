@@ -43,8 +43,9 @@ test("trusted runner fails closed when required secrets are missing", async () =
   assert.match(runner, /CODEGEN_AUTO_PUBLIC_TUNNEL/);
   assert.match(runner, /CODEGEN_CONTROL_PLANE_URL/);
   assert.match(runner, /maintainRunnerEndpoint/);
-  assert.match(runner, /\/api\/v1\/runner\/heartbeat/);
-  assert.match(runner, /runner endpoint rotation requested by control plane/);
+  assert.match(runner, /\/control-endpoint\/rotate/);
+  assert.match(runner, /access-control-allow-private-network/);
+  assert.match(runner, /instanceId: RUNNER_INSTANCE_ID/);
 });
 
 test("trusted runner can cooperatively pause and cleanly rerun a job", async () => {

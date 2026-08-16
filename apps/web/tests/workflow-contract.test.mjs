@@ -47,15 +47,13 @@ test("the browser dispatches a server-side job and never calls localhost", async
 test("expired runner endpoints can self-register, rotate, and be repaired from the UI", async () => {
   const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
   const endpoint = await readFile(new URL("app/lib/runner-endpoint.ts", root), "utf8");
-  const heartbeat = await readFile(new URL("app/api/v1/runner/heartbeat/route.ts", root), "utf8");
   const recover = await readFile(new URL("app/api/v1/runner/recover/route.ts", root), "utf8");
   assert.match(app, /修复连接/);
+  assert.match(app, /127\.0\.0\.1:5174\/control-endpoint\/rotate/);
   assert.match(app, /\/api\/v1\/runner\/recover/);
   assert.match(endpoint, /runner_endpoints/);
-  assert.match(endpoint, /rotate_requested_at/);
-  assert.match(heartbeat, /RUNNER_CALLBACK_TOKEN/);
-  assert.match(heartbeat, /registerRunnerEndpoint/);
-  assert.match(recover, /requestRunnerRotation/);
+  assert.match(endpoint, /registerRunnerEndpoint/);
+  assert.match(recover, /health\.instanceId !== instanceId/);
 });
 
 test("only a trusted evidence callback may mark a project delivered", async () => {

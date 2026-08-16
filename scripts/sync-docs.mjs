@@ -16,14 +16,13 @@ function yes(source, pattern) {
   return pattern.test(source) ? "已实现" : "未检测到";
 }
 
-const [app, projects, projectDelete, jobs, pause, artifacts, runnerHeartbeat, runnerRecover, runnerEndpoint, runner, generate, checkpoints, specWorkflow, manifest, serverAuth] = await Promise.all([
+const [app, projects, projectDelete, jobs, pause, artifacts, runnerRecover, runnerEndpoint, runner, generate, checkpoints, specWorkflow, manifest, serverAuth] = await Promise.all([
   text("apps/web/app/MobileBuildApp.tsx"),
   text("apps/web/app/api/projects/route.ts"),
   text("apps/web/app/api/projects/[projectId]/route.ts"),
   text("apps/web/app/api/v1/projects/[projectId]/jobs/route.ts"),
   text("apps/web/app/api/v1/projects/[projectId]/pause/route.ts"),
   text("apps/web/app/api/v1/projects/[projectId]/artifacts/[stage]/route.ts"),
-  text("apps/web/app/api/v1/runner/heartbeat/route.ts"),
   text("apps/web/app/api/v1/runner/recover/route.ts"),
   text("apps/web/app/lib/runner-endpoint.ts"),
   text("packages/codegen/runner.mjs"),
@@ -48,7 +47,7 @@ const facts = [
   ["产物预览", yes(app + artifacts + checkpoints, /MarkdownPreview[\s\S]*readStageArtifacts/), "步骤文件可独立读取，md 产物按 Markdown 渲染"],
   ["可信状态同步", yes(projects, /executionEvents/), "控制站服务端轮询 Runner，不接受浏览器终态"],
   ["受信任派发", yes(jobs, /CODEX_RUNNER_TOKEN/), "服务端 Bearer token 派发"],
-  ["Runner 自动换址", yes(app + runnerHeartbeat + runnerRecover + runnerEndpoint + runner, /修复连接[\s\S]*registerRunnerEndpoint[\s\S]*requestRunnerRotation[\s\S]*maintainRunnerEndpoint/), "Runner 心跳登记当前地址；隧道失效自动轮换，用户也可点击修复连接并重派原任务"],
+  ["Runner 自动换址", yes(app + runnerRecover + runnerEndpoint + runner, /修复连接[\s\S]*registerRunnerEndpoint[\s\S]*maintainRunnerEndpoint[\s\S]*control-endpoint\/rotate/), "Runner 自动维护控制隧道；点击修复连接后从本机取得新地址，经服务端身份与健康检查后重派原任务"],
   ["Runner message 流", yes(runner, /function reportProgress\(projectId, event, jobId\)/), "progress/message/events，最近 24 条"],
   ["Mobile Spec 硬门禁", yes(generate, /Mobile Spec workflow is required/), "缺少或失败时停止生成"],
   ["交付 evidence", yes(runner, /mobileSpecPassed: true[\s\S]*buildPassed: true[\s\S]*deployPassed: true/), "三项证据齐全才 delivered"],
@@ -56,7 +55,7 @@ const facts = [
   ["D1 persistence", yes(serverAuth, /env\.DB/), "项目、会话与历史记录持久化"],
 ];
 
-const sources = [app, projects, projectDelete, jobs, pause, artifacts, runnerHeartbeat, runnerRecover, runnerEndpoint, runner, generate, checkpoints, specWorkflow, manifest, serverAuth].join("\n");
+const sources = [app, projects, projectDelete, jobs, pause, artifacts, runnerRecover, runnerEndpoint, runner, generate, checkpoints, specWorkflow, manifest, serverAuth].join("\n");
 const digest = createHash("sha256").update(sources).digest("hex").slice(0, 16);
 const body = `# 实现状态快照
 

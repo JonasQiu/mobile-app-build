@@ -10,7 +10,7 @@
 
 ## 2. 服务连接
 
-控制面与执行面分离，服务之间全部通过 HTTPS + 凭证连接。Runner 通过心跳把当前公网入口登记到 D1；控制面优先使用最新心跳地址，环境变量只作为冷启动回退：
+控制面与执行面分离，服务之间通过 HTTPS + 凭证连接。Runner 自动维护公网入口；入口失效时，登录用户可从运行 Runner 的本机恢复接口取得新地址，再由控制面完成身份与健康检查后写入 D1：
 
 ```mermaid
 flowchart LR
@@ -18,7 +18,7 @@ flowchart LR
   W -->|"D1 binding (env.DB)"| D[(Cloudflare D1)]
   W -->|"Bearer CODEX_RUNNER_TOKEN"| R[Node Runner]
   R -->|"Bearer RUNNER_CALLBACK_TOKEN"| W
-  R -->|"心跳登记 / 自动换址"| D
+  B -->|"本机修复 127.0.0.1"| R
   R --> C[Codex CLI / OpenAI API]
   R --> P[DeploymentProvider]
 ```
@@ -28,9 +28,10 @@ flowchart LR
 | 浏览器 → 控制面 | HttpOnly Cookie | 15 秒轮询 `GET /api/projects` 获取进度 |
 | 控制面 → D1 | Worker binding | `env.DB` 直连，不走网络 |
 | 控制面 → Runner | D1 最新登记地址（`CODEX_RUNNER_URL` 为回退）+ `CODEX_RUNNER_TOKEN` | 派发、暂停、拉取状态与读取阶段产物 |
-| Runner → 控制面 | `RUNNER_CALLBACK_TOKEN` | 心跳登记 `/api/v1/runner/heartbeat` 与交付回调 |
+| Runner → 控制面 | `RUNNER_CALLBACK_TOKEN` | 交付结果回调；外层策略阻断时由控制面主动拉取终态 |
+| 浏览器 → 本机 Runner | 严格 Origin + Private Network CORS | 用户点击“修复连接”时请求本机 Runner 轮换入口 |
 
-`CODEX_RUNNER_TOKEN` 或 `RUNNER_CALLBACK_TOKEN` 缺失时派发路由直接返回 `503 EXECUTOR_OFFLINE`，不会伪造任务。Runner 地址优先来自 45 秒内有效的 D1 心跳登记；没有登记时才使用 `CODEX_RUNNER_URL`。Runner token 永不下发给浏览器。
+`CODEX_RUNNER_TOKEN` 或 `RUNNER_CALLBACK_TOKEN` 缺失时派发路由直接返回 `503 EXECUTOR_OFFLINE`，不会伪造任务。Runner 地址优先来自 D1 最近一次经验证的登记；没有登记时才使用 `CODEX_RUNNER_URL`。Runner token 永不下发给浏览器。
 
 ## 3. 控制站 API（当前实现）
 
@@ -48,9 +49,8 @@ flowchart LR
 | `GET` | `/api/v1/projects/{projectId}/artifacts/{stage}` | 校验所有权后读取指定步骤产物 |
 | `POST` | `/api/v1/projects/{projectId}/delivery` | 兼容 Runner 回调，需要 callback token |
 | `GET` | `/api/v1/projects/{projectId}/delivery` | 受信任 Runner 或 Sites owner 读取项目需求 |
-| `POST` | `/api/v1/runner/heartbeat` | Runner 携 callback token 登记最新地址并读取换址指令 |
 | `GET` | `/api/v1/runner/recover` | 已登录用户查询 Runner 连接状态 |
-| `POST` | `/api/v1/runner/recover` | 连接失效时请求 Runner 自动换址 |
+| `POST` | `/api/v1/runner/recover` | 校验本机 Runner 返回的新地址与实例编号后更新 D1 |
 
 ### `GET /api/projects` 项目结构
 
@@ -90,7 +90,7 @@ flowchart LR
 
 控制站在占用执行名额前先请求该接口，10 秒内不可达、返回非 JSON、`ok` 为 false 或未配置 DeploymentProvider 时直接返回 503，项目保持原状态。这样失效的 Runner 地址不会把项目卡在 `dispatching`。
 
-页面收到 `EXECUTOR_OFFLINE`、`EXECUTOR_CONFIG_INVALID`、`EXECUTOR_UNHEALTHY` 或 `EXECUTOR_UNREACHABLE` 后展示“修复连接”。点击后控制面写入换址请求，Runner 下一次心跳收到指令后关闭旧控制隧道、创建新地址并重新登记；页面每 2 秒检查一次，恢复后自动按原执行模式重新派发任务。
+页面收到 `EXECUTOR_OFFLINE`、`EXECUTOR_CONFIG_INVALID`、`EXECUTOR_UNHEALTHY` 或 `EXECUTOR_UNREACHABLE` 后展示“修复连接”。点击后浏览器只访问本机 `127.0.0.1:5174/control-endpoint/rotate`，Runner 关闭旧控制隧道并返回新地址与进程实例编号。控制面随后从公网检查该地址的 `/health`，只有实例编号一致、Runner 与部署能力均健康时才更新 D1，并自动按原执行模式重新派发任务。该方案不依赖 Runner 主动请求可能被外层策略阻断的控制站地址。
 
 ### 创建任务
 

@@ -25,6 +25,7 @@ type ArtifactFile = { name: string; label: string; format: "markdown" | "json" |
 type ArtifactResponse = { stage: ExecutionStage; checkpointed: boolean; artifacts: ArtifactFile[] };
 
 const POLL_INTERVAL_MS = 15_000;
+const LOCAL_RUNNER_RECOVERY_URL = "http://127.0.0.1:5174/control-endpoint/rotate";
 const RECOVERABLE_RUNNER_CODES = new Set([
   "EXECUTOR_OFFLINE",
   "EXECUTOR_CONFIG_INVALID",
@@ -447,29 +448,29 @@ export function MobileBuildApp() {
     setGenError("");
     setGenProgress("正在检测 Runner 并请求自动更换连接地址…");
     try {
-      const response = await fetch("/api/v1/runner/recover", { method: "POST", headers: { accept: "application/json" } });
-      const initial = await readJsonResponse<{ online?: boolean; recovering?: boolean; error?: string; message?: string }>(response, "连接修复失败");
-      if (!response.ok && !initial.recovering) throw new Error(initial.error || "连接修复失败");
-      if (!initial.online) {
-        let recovered = false;
-        for (let attempt = 1; attempt <= 20; attempt += 1) {
-          setGenProgress(`正在等待 Runner 新地址登记（${attempt}/20）…`);
-          await new Promise((resolve) => window.setTimeout(resolve, 2_000));
-          const statusResponse = await fetch("/api/v1/runner/recover", { headers: { accept: "application/json" } });
-          const current = await readJsonResponse<{ online?: boolean; error?: string }>(statusResponse, "连接状态读取失败");
-          if (!statusResponse.ok) throw new Error(current.error || "连接状态读取失败");
-          if (current.online) {
-            recovered = true;
-            break;
-          }
-        }
-        if (!recovered) throw new Error("自动更换地址尚未完成，请确认本机 Runner 服务正在运行后再次点击修复连接");
+      const localResponse = await fetch(LOCAL_RUNNER_RECOVERY_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: "{}",
+      });
+      const local = await readJsonResponse<{ endpoint?: string; instanceId?: string; error?: string }>(localResponse, "本机 Runner 连接失败");
+      if (!localResponse.ok || !local.endpoint || !local.instanceId) {
+        throw new Error(local.error || "本机 Runner 未返回新的连接地址");
       }
+      setGenProgress("新地址已创建，正在进行服务端健康检查…");
+      const response = await fetch("/api/v1/runner/recover", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ endpoint: local.endpoint, instanceId: local.instanceId }),
+      });
+      const recovered = await readJsonResponse<{ online?: boolean; error?: string }>(response, "连接修复失败");
+      if (!response.ok || !recovered.online) throw new Error(recovered.error || "连接修复失败");
       setRunnerIssueCode("");
       setGenProgress("Runner 新连接已恢复，正在重新派发原任务…");
       await runProject(activeProjectId, lastExecutionAction);
     } catch (error) {
-      setGenError(error instanceof Error ? error.message : "连接修复失败");
+      const message = error instanceof Error ? error.message : "连接修复失败";
+      setGenError(message.includes("fetch") ? "无法连接本机 Runner，请确认 Runner 服务正在当前设备运行后再试" : message);
     } finally {
       setRepairingRunner(false);
     }

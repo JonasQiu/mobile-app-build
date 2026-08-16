@@ -1,7 +1,6 @@
 import { getD1 } from "./server-auth";
 
 const PRIMARY_RUNNER_ID = "primary";
-const RUNNER_HEARTBEAT_TTL_MS = 45_000;
 const RUNNER_HEALTH_TIMEOUT_MS = 8_000;
 
 type RunnerEndpointRow = {
@@ -48,8 +47,7 @@ export async function readRegisteredRunner() {
 
 export async function resolveRunnerEndpoint() {
   const registered = await readRegisteredRunner().catch(() => null);
-  const lastSeen = registered ? Date.parse(registered.lastSeenAt) : 0;
-  if (registered && Number.isFinite(lastSeen) && Date.now() - lastSeen <= RUNNER_HEARTBEAT_TTL_MS) {
+  if (registered) {
     const endpoint = normalizeRunnerEndpoint(registered.endpoint);
     if (endpoint) return endpoint;
   }
@@ -67,26 +65,20 @@ export async function checkRunnerHealth(endpoint: string | null) {
       signal: controller.signal,
     });
     const body = response.headers.get("content-type")?.includes("application/json")
-      ? await response.json().catch(() => null) as { ok?: boolean; deploymentProviderConfigured?: boolean } | null
+      ? await response.json().catch(() => null) as { ok?: boolean; deploymentProviderConfigured?: boolean; instanceId?: string } | null
       : null;
     const online = Boolean(response.ok && body?.ok && body.deploymentProviderConfigured);
     return {
       online,
       configured: true,
       code: online ? null : "EXECUTOR_UNHEALTHY",
+      instanceId: typeof body?.instanceId === "string" ? body.instanceId : null,
     };
   } catch {
-    return { online: false, configured: true, code: "EXECUTOR_UNREACHABLE" };
+    return { online: false, configured: true, code: "EXECUTOR_UNREACHABLE", instanceId: null };
   } finally {
     clearTimeout(timer);
   }
-}
-
-export async function requestRunnerRotation() {
-  const result = await getD1().prepare(`UPDATE runner_endpoints
-    SET rotate_requested_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-    .bind(PRIMARY_RUNNER_ID).run();
-  return Boolean(result.meta.changes);
 }
 
 export async function registerRunnerEndpoint(endpointValue: unknown, instanceIdValue: unknown) {

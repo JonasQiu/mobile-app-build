@@ -54,8 +54,9 @@ const previews = new Map();
 const RUNNER_INSTANCE_ID = `runner_${crypto.randomUUID()}`;
 const CONTROL_PLANE_URL = String(process.env.CODEGEN_CONTROL_PLANE_URL || "").trim();
 const AUTO_PUBLIC_TUNNEL = process.env.CODEGEN_AUTO_PUBLIC_TUNNEL === "1";
-const RUNNER_HEARTBEAT_INTERVAL_MS = Math.max(5_000, Number(process.env.CODEGEN_RUNNER_HEARTBEAT_INTERVAL_MS) || 10_000);
 let runnerEndpointTunnel = null;
+let runnerEndpointChange = null;
+let runnerListeningPort = PORT;
 let shuttingDown = false;
 
 const PROGRESS = {
@@ -164,63 +165,62 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-function send(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+function send(res, status, body, headers = {}) {
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers });
   res.end(JSON.stringify(body));
 }
 
 const delay = (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 
-function controlPlaneEndpoint(pathname) {
+function controlPlaneOrigin() {
   if (!CONTROL_PLANE_URL) return null;
   try {
-    return new URL(pathname, CONTROL_PLANE_URL).toString();
+    return new URL(CONTROL_PLANE_URL).origin;
   } catch {
     return null;
   }
 }
 
-async function heartbeatRunnerEndpoint(endpoint) {
-  const url = controlPlaneEndpoint("/api/v1/runner/heartbeat");
-  if (!url || !CALLBACK_TOKEN) throw new Error("Runner control-plane registration is not configured");
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12_000);
-  const headers = { authorization: `Bearer ${CALLBACK_TOKEN}`, "content-type": "application/json", accept: "application/json" };
-  if (process.env.SITES_BYPASS_TOKEN) headers["OAI-Sites-Authorization"] = `Bearer ${process.env.SITES_BYPASS_TOKEN}`;
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ endpoint, instanceId: RUNNER_INSTANCE_ID }),
-      signal: controller.signal,
-    });
-    const body = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(body?.error || `Runner endpoint registration failed (HTTP ${response.status})`);
-    return Boolean(body?.rotate);
-  } finally {
-    clearTimeout(timer);
+function localRecoveryCors(req) {
+  const allowedOrigin = controlPlaneOrigin();
+  if (!allowedOrigin || req.headers.origin !== allowedOrigin) return null;
+  return {
+    "access-control-allow-origin": allowedOrigin,
+    "access-control-allow-methods": "POST, OPTIONS",
+    "access-control-allow-headers": "content-type, accept",
+    "access-control-allow-private-network": "true",
+    vary: "Origin, Access-Control-Request-Private-Network",
+  };
+}
+
+async function ensureRunnerEndpoint(port, { rotate = false } = {}) {
+  if (runnerEndpointChange) return runnerEndpointChange;
+  if (!rotate && runnerEndpointTunnel?.isAlive()) {
+    return new URL("/jobs", runnerEndpointTunnel.url).toString();
   }
+  runnerEndpointChange = (async () => {
+    runnerEndpointTunnel?.stop();
+    runnerEndpointTunnel = null;
+    const tunnel = await startQuickTunnel(`http://127.0.0.1:${port}`);
+    if (shuttingDown) {
+      tunnel.stop();
+      throw new Error("runner is shutting down");
+    }
+    runnerEndpointTunnel = tunnel;
+    const endpoint = new URL("/jobs", tunnel.url).toString();
+    console.log(`runner public endpoint ready at ${endpoint}`);
+    return endpoint;
+  })().finally(() => {
+    runnerEndpointChange = null;
+  });
+  return runnerEndpointChange;
 }
 
 async function maintainRunnerEndpoint(port) {
-  const localUrl = `http://127.0.0.1:${port}`;
   while (!shuttingDown) {
     try {
-      if (!runnerEndpointTunnel?.isAlive()) {
-        runnerEndpointTunnel?.stop();
-        runnerEndpointTunnel = await startQuickTunnel(localUrl);
-        console.log(`runner public endpoint registered at ${runnerEndpointTunnel.url}`);
-      }
-      const endpoint = new URL("/jobs", runnerEndpointTunnel.url).toString();
-      const rotate = await heartbeatRunnerEndpoint(endpoint);
-      if (rotate) {
-        console.log("runner endpoint rotation requested by control plane");
-        runnerEndpointTunnel.stop();
-        runnerEndpointTunnel = null;
-        await delay(500);
-        continue;
-      }
-      await delay(RUNNER_HEARTBEAT_INTERVAL_MS);
+      await ensureRunnerEndpoint(port);
+      await delay(5_000);
     } catch (error) {
       if (shuttingDown) break;
       const message = error instanceof Error ? error.message : String(error);
@@ -571,10 +571,29 @@ async function executeJob(job, controller) {
 }
 
 const server = createServer(async (req, res) => {
+  if (req.url === "/control-endpoint/rotate" && req.method === "OPTIONS") {
+    const headers = localRecoveryCors(req);
+    if (!headers) return send(res, 403, { error: "origin is not allowed" });
+    res.writeHead(204, headers);
+    res.end();
+    return;
+  }
+  if (req.url === "/control-endpoint/rotate" && req.method === "POST") {
+    const headers = localRecoveryCors(req);
+    if (!headers) return send(res, 403, { error: "origin is not allowed" });
+    if (!AUTO_PUBLIC_TUNNEL) return send(res, 503, { error: "Runner 自动公网连接未启用" }, headers);
+    try {
+      const endpoint = await ensureRunnerEndpoint(runnerListeningPort, { rotate: true });
+      return send(res, 200, { endpoint, instanceId: RUNNER_INSTANCE_ID }, headers);
+    } catch (error) {
+      return send(res, 503, { error: error instanceof Error ? error.message : String(error) }, headers);
+    }
+  }
   if (req.method === "GET" && req.url === "/health") {
     send(res, 200, {
       ok: Boolean(RUNNER_TOKEN && CALLBACK_TOKEN && (process.env.OPENAI_API_KEY || process.env.CODEX_BIN)),
       deploymentProviderConfigured: Boolean(process.env.CODEGEN_PUBLIC_PREVIEW_BASE_URL || process.env.CODEGEN_DEPLOYMENT_PROVIDER),
+      instanceId: RUNNER_INSTANCE_ID,
     });
     return;
   }
@@ -749,8 +768,9 @@ process.on("SIGTERM", shutdown);
 server.listen(PORT, "127.0.0.1", () => {
   const address = server.address();
   const listeningPort = typeof address === "object" && address ? address.port : PORT;
+  runnerListeningPort = listeningPort;
   console.log(`trusted codegen runner listening on http://127.0.0.1:${listeningPort}`);
-  if (AUTO_PUBLIC_TUNNEL && CONTROL_PLANE_URL) {
+  if (AUTO_PUBLIC_TUNNEL) {
     void maintainRunnerEndpoint(listeningPort).catch((error) => {
       console.error(`runner endpoint loop stopped: ${error instanceof Error ? error.message : String(error)}`);
     });

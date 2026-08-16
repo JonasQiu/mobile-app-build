@@ -35,7 +35,7 @@ Manifest 规范化会确定性合并重复的导航 href；若合并后不足 4 
 
 Runner 会分别校验 Mobile Spec、实现、构建、部署检查点；继续执行时跳过所有已成功阶段。Mobile Spec 另用 `mobile-spec-progress.json` 保存 propose/design/task 成功前缀、尝试次数和最近 gate 错误，失败后只重做当前子阶段。升级前工作区若包含需求一致的完整规格、manifest 和生产构建，会自动补写 marker，不触发重复构建。规格步骤保存五份 Markdown 文档，实现保存 manifest，构建保存真实日志，部署保存 URL 与健康检查证据。单步执行实现、构建或部署时，前置检查点缺失会明确失败。
 
-启用 `CODEGEN_AUTO_PUBLIC_TUNNEL=1` 后，Runner 会为自身控制 API 建立公网入口，并通过 `CODEGEN_CONTROL_PLANE_URL` 每 10 秒向控制面登记当前 `/jobs` 地址。控制隧道退出会自动重建；控制面发出换址指令时也会主动关闭旧隧道并登记新地址。该机制只解决 Runner 临时入口漂移，不会把 Quick Tunnel 变成具有 SLA 的生产服务。
+启用 `CODEGEN_AUTO_PUBLIC_TUNNEL=1` 后，Runner 会为自身控制 API 建立公网入口，控制隧道退出会自动重建。本机恢复接口 `POST /control-endpoint/rotate` 只接受 `CODEGEN_CONTROL_PLANE_URL` 对应的浏览器 Origin，并支持 Private Network Access 预检；它轮换隧道并返回新 `/jobs` 地址与 Runner 实例编号，由控制面完成公网身份和健康检查后登记。该机制只解决 Runner 临时入口漂移，不会把 Quick Tunnel 变成具有 SLA 的生产服务。
 
 ## 环境变量
 
@@ -49,9 +49,8 @@ Runner 会分别校验 Mobile Spec、实现、构建、部署检查点；继续�
 | `CODEGEN_MODEL` | `gpt-4o` | OpenAI Structured Outputs 模型 |
 | `CODEX_MODEL` | Codex 默认 | Codex CLI 模型覆盖 |
 | `CODEGEN_RUNNER_PORT` | `5174` | Runner 监听端口 |
-| `CODEGEN_CONTROL_PLANE_URL` | 无 | Runner 心跳登记和自动换址使用的控制站 HTTPS 地址 |
+| `CODEGEN_CONTROL_PLANE_URL` | 无 | 本机恢复接口允许的控制站 Origin |
 | `CODEGEN_AUTO_PUBLIC_TUNNEL` | 未设置 | `1` 时自动维护 Runner 自身的公网控制隧道 |
-| `CODEGEN_RUNNER_HEARTBEAT_INTERVAL_MS` | `10000` | Runner 地址心跳间隔，最小 5 秒 |
 | `CODEGEN_TIMEOUT_MS` | `600000` | 一次完整生成超时 |
 | `CODEGEN_DEPLOYMENT_HEALTH_TIMEOUT_MS` | `120000` | 公网部署健康检查总等待时间；由多个临时部署地址共享 |
 | `CODEGEN_DEPLOYMENT_TUNNEL_ATTEMPTS` | `3` | 总时限内最多创建的临时部署地址数，范围 1–5 |
