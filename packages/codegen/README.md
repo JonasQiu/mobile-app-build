@@ -68,3 +68,13 @@ npm test
 ```
 
 `--serve` 与内部 localhost 只用于本地检查，不能作为最终交付地址。
+
+## macOS 常驻服务
+
+开发验收机可将 Runner 注册为当前用户的 LaunchAgent，使 Codex 会话结束或 Runner 异常退出后自动恢复：
+
+```bash
+packages/codegen/scripts/install-runner-service.sh /tmp/mobile-build-runner.env
+```
+
+安装器会把环境文件以 `0600` 权限保存到用户配置目录，把 `cloudflared` 复制到稳定位置，并创建 `com.siteforge.runner` 常驻服务。密钥和二进制均不会提交到 Git。电脑重启后 Runner 会自动启动；如果 Quick Tunnel 地址变化，页面点击“修复连接”即可从本机 Runner 取得并登记新地址。
