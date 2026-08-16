@@ -3,7 +3,8 @@
 // result: ok flag, exit code, and the tail of the log (enough to feed back to
 // the model on retry or to surface in the UI on hard failure).
 import { spawn } from "node:child_process";
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { delimiter, dirname, join, resolve } from "node:path";
 
 const PHASE_TIMEOUT_MS = 180_000;
 const LOG_TAIL_BYTES = 6 * 1024;
@@ -73,15 +74,23 @@ function tail(text, bytes = LOG_TAIL_BYTES) {
 
 export async function runBuild(outDir, { signal } = {}) {
   const cwd = resolve(outDir);
-  const extraEnv = { CI: "1", NEXT_TELEMETRY_DISABLED: "1" };
-  const npmBin = process.platform === "win32" ? "npm.cmd" : "npm";
+  const nodeBinDir = dirname(process.execPath);
+  const currentPath = process.env.PATH || "";
+  const extraEnv = {
+    CI: "1",
+    NEXT_TELEMETRY_DISABLED: "1",
+    PATH: [nodeBinDir, currentPath].filter(Boolean).join(delimiter),
+  };
+  const adjacentNpm = join(nodeBinDir, process.platform === "win32" ? "npm.cmd" : "npm");
+  const npmBin = process.env.CODEGEN_NPM_BIN
+    || (existsSync(adjacentNpm) ? adjacentNpm : process.platform === "win32" ? "npm.cmd" : "npm");
 
   let install;
   try {
     install = await run(npmBin, ["ci", "--no-audit", "--no-fund"], cwd, extraEnv, signal);
   } catch (err) {
     if (signal?.aborted) throw err;
-    return { ok: false, exitCode: null, log: `npm ci ${err.message}` };
+    return { ok: false, exitCode: null, infrastructureError: true, log: `npm ci ${err.message}` };
   }
   if (install.code !== 0) {
     return {
@@ -99,6 +108,7 @@ export async function runBuild(outDir, { signal } = {}) {
     return {
       ok: false,
       exitCode: null,
+      infrastructureError: true,
       log: tail(`$ npm ci\n${install.stdout}\n${install.stderr}\n$ npm run build\n${err.message}`),
     };
   }

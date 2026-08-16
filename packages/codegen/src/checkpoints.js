@@ -141,6 +141,14 @@ export async function writeBuildLog(outDir, log) {
   await writeFile(join(outDir, BUILD_LOG), String(log || ""), "utf8");
 }
 
+export async function readBuildLog(outDir) {
+  try {
+    return await readFile(join(outDir, BUILD_LOG), "utf8");
+  } catch {
+    return "";
+  }
+}
+
 export async function writeDeploymentEvidence(outDir, evidence) {
   await writeJson(join(outDir, DEPLOYMENT_EVIDENCE), evidence);
 }

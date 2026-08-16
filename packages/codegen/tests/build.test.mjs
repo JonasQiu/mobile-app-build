@@ -23,7 +23,12 @@ test(
   async () => {
     assert.ok(existsSync(FIXTURE), `fixture exists: ${FIXTURE}`);
     const out = join(tmpdir(), `mbcodegen-build-${randomUUID()}`);
+    const originalPath = process.env.PATH;
     try {
+      // launchd user agents receive a minimal PATH that does not include fnm.
+      // runBuild must still locate npm next to process.execPath and make `node`
+      // available to npm/next shebangs.
+      process.env.PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
       cpSync(FIXTURE, out, {
         recursive: true,
         filter: (src) => {
@@ -41,7 +46,23 @@ test(
       }
       assert.equal(result.ok, true, `build should succeed (exit ${result.exitCode})`);
     } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
       rmSync(out, { recursive: true, force: true });
     }
   },
 );
+
+test("runBuild classifies a missing npm executable as infrastructure failure", async () => {
+  const originalNpmBin = process.env.CODEGEN_NPM_BIN;
+  process.env.CODEGEN_NPM_BIN = join(tmpdir(), `missing-npm-${randomUUID()}`);
+  try {
+    const result = await runBuild(FIXTURE);
+    assert.equal(result.ok, false);
+    assert.equal(result.infrastructureError, true);
+    assert.match(result.log, /npm ci .*ENOENT/);
+  } finally {
+    if (originalNpmBin === undefined) delete process.env.CODEGEN_NPM_BIN;
+    else process.env.CODEGEN_NPM_BIN = originalNpmBin;
+  }
+});

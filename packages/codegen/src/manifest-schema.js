@@ -64,6 +64,19 @@ export function validateManifest(manifest) {
     }
   }
   const paths = new Set(manifest.files.map((file) => file.path));
+  const routeKindsByDirectory = new Map();
+  for (const path of paths) {
+    const match = path.match(/^(app(?:\/[A-Za-z0-9_-]+)*)\/(page|route)\.(?:ts|tsx|js|mjs)$/);
+    if (!match) continue;
+    const kinds = routeKindsByDirectory.get(match[1]) || new Set();
+    kinds.add(match[2]);
+    routeKindsByDirectory.set(match[1], kinds);
+  }
+  for (const [directory, kinds] of routeKindsByDirectory) {
+    if (kinds.has("page") && kinds.has("route")) {
+      throw new Error(`Manifest cannot contain both page and route handlers in ${directory}`);
+    }
+  }
   const required = [
     "lib/data.ts",
     "app/layout.tsx",

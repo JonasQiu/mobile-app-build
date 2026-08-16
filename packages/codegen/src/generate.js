@@ -9,6 +9,7 @@ import { runSpecWorkflow } from "./spec-workflow.js";
 import {
   clearRepairState,
   loadSpecCheckpoint,
+  readBuildLog,
   readRepairState,
   writeBuildLog,
   writeOutputCheckpoint,
@@ -19,6 +20,11 @@ import {
 export const MAX_ATTEMPTS = 3;
 
 const GENERATION_STAGES = ["mobile-spec", "implementation", "build"];
+
+function isInfrastructureBuildFailure(result) {
+  if (result?.infrastructureError) return true;
+  return /spawn\s+(?:npm|npm\.cmd)\s+ENOENT|\/usr\/bin\/env:\s*node:\s*(?:No such file|not found)/i.test(String(result?.log || result || ""));
+}
 
 function stageIndex(stage) {
   return GENERATION_STAGES.indexOf(stage);
@@ -67,6 +73,7 @@ export async function generate({
 
   if (startStage === "build") {
     const savedRepair = resume ? await readRepairState({ outDir, requirement, stage: "build" }) : null;
+    const savedBuildLog = resume ? await readBuildLog(outDir) : "";
     let repairError = savedRepair?.error || "";
     let attemptOffset = savedRepair?.attempts || 0;
     let lastBuild = null;
@@ -94,8 +101,58 @@ export async function generate({
       repairError = lastBuild.log;
       attemptOffset = 1;
       await writeRepairState({ outDir, requirement, stage: "build", error: repairError, attempts: attemptOffset });
+      if (isInfrastructureBuildFailure(lastBuild)) {
+        return {
+          ok: false,
+          infrastructureError: true,
+          outDir,
+          buildOk: false,
+          attempts: attemptOffset,
+          buildLog: repairError,
+          manifest: null,
+          specWorkflowOk: true,
+          completedStage: "build",
+        };
+      }
       progress({ stage: "retry", phase: "start", attempt: attemptOffset, buildOk: false });
     } else {
+      if (isInfrastructureBuildFailure(repairError) || isInfrastructureBuildFailure(savedBuildLog)) {
+        const retryAttempt = attemptOffset + 1;
+        progress({ stage: "build", phase: "infrastructure-retry", attempt: retryAttempt });
+        lastBuild = await runBuild(outDir, { signal });
+        await writeBuildLog(outDir, lastBuild.log);
+        if (lastBuild.ok) {
+          await writeOutputCheckpoint({ outDir, requirement, stage: "build" });
+          await clearRepairState(outDir);
+          progress({ stage: "done", phase: "complete", attempt: retryAttempt });
+          return {
+            ok: true,
+            outDir,
+            buildOk: true,
+            attempts: retryAttempt,
+            buildLog: lastBuild.log,
+            manifest: null,
+            specWorkflowOk: true,
+            completedStage: "build",
+          };
+        }
+        repairError = lastBuild.log;
+        attemptOffset = retryAttempt;
+        await writeRepairState({ outDir, requirement, stage: "build", error: repairError, attempts: attemptOffset });
+        if (isInfrastructureBuildFailure(lastBuild)) {
+          return {
+            ok: false,
+            infrastructureError: true,
+            outDir,
+            buildOk: false,
+            attempts: attemptOffset,
+            buildLog: repairError,
+            manifest: null,
+            specWorkflowOk: true,
+            completedStage: "build",
+          };
+        }
+      }
       progress({ stage: "retry", phase: "resume", attempt: attemptOffset, buildOk: false });
     }
 
@@ -275,6 +332,19 @@ export async function generate({
     prevBuildError = lastBuild.log;
     repairStage = "build";
     await writeRepairState({ outDir, requirement, stage: "build", error: prevBuildError, attempts: attempt });
+    if (isInfrastructureBuildFailure(lastBuild)) {
+      return {
+        ok: false,
+        infrastructureError: true,
+        outDir,
+        buildOk: false,
+        attempts: attempt,
+        buildLog: prevBuildError,
+        manifest,
+        specWorkflowOk: true,
+        completedStage: "build",
+      };
+    }
     progress({ stage: "retry", phase: "start", attempt, buildOk: false });
   }
 

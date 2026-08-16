@@ -30,6 +30,8 @@ test("trusted runner fails closed when required secrets are missing", async () =
   assert.match(runner, /for \(let deploymentAttempt = 1; deploymentAttempt <= DEPLOYMENT_TUNNEL_ATTEMPTS/);
   assert.match(runner, /部署地址 \$\{deploymentAttempt\}\/\$\{DEPLOYMENT_TUNNEL_ATTEMPTS\} · 公网健康检查第 \$\{attempt\} 次/);
   assert.match(runner, /正在自动更换地址，已成功的规格、实现和构建不会重跑/);
+  assert.match(runner, /构建执行环境不可用/);
+  assert.match(runner, /检测到上次是构建环境错误，正在保留页面实现并直接重试 npm ci/);
   assert.match(runner, /if \(deployment\).*deployment\.stop\(\)/s);
   assert.match(runner, /inspectCheckpoints\(\{ outDir, specWorkRoot, requirement: job\.requirement \}\)/);
   assert.match(runner, /已复用“\$\{stageLabel\(stage\)\}”成功检查点，不重复执行/);

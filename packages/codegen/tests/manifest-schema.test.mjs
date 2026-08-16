@@ -78,6 +78,12 @@ test("normalizeManifest rejects build-time Google font downloads", () => {
   assert.throws(() => normalizeManifest(manifest), /must not download fonts/);
 });
 
+test("normalizeManifest rejects a page and route handler in the same segment", () => {
+  const manifest = structuredClone(VALID);
+  manifest.files.push({ path: "app/courses/route.ts", content: "export function GET() { return Response.json({ ok: true }); }" });
+  assert.throws(() => normalizeManifest(manifest), /both page and route handlers in app\/courses/);
+});
+
 test("normalizeManifest removes duplicate nav hrefs when four distinct routes remain", () => {
   const manifest = structuredClone(VALID);
   manifest.navRoutes.push({ href: "/courses", fileSubpath: "app/courses/page.tsx" });

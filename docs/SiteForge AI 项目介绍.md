@@ -276,6 +276,7 @@ queued → dispatching → building → ready | paused | failed | delivered
 
 - Runner 为控制 API 自动维护独立公网隧道，隧道退出时自动重建；
 - macOS 验收机通过用户级 LaunchAgent 在登录后自动启动 Runner，并在进程异常退出时拉起；环境文件使用 `0600` 权限，隧道二进制保存到用户私有稳定目录；
+- LaunchAgent 显式注入稳定 Node/npm 路径，构建器同时使用 Node 同目录的绝对 npm；工具链启动失败只修执行环境，恢复后直接重试构建，不让 Codex 错改页面；
 - D1 保存最近一次通过验证的 endpoint、Runner 实例编号和登记时间；
 - 控制面优先使用 D1 已验证地址，环境变量只作为冷启动回退；
 - 隧道进程退出时 Runner 自动重建；连接类错误时页面展示“修复连接”；
@@ -293,7 +294,7 @@ queued → dispatching → building → ready | paused | failed | delivered
 - 生成文件经过路径、扩展名和路由校验；
 - 浏览器无权写入最终状态和交付 URL；
 - Secret 只存在于受控环境变量，不进入日志、文档和 Git；
-- 当前已建立 44 项 Runner 测试、13 项 Web 契约测试，并执行 ESLint、生产构建和文档检查。
+- 当前已建立 46 项 Runner 测试、13 项 Web 契约测试，并执行 ESLint、生产构建和文档检查。
 
 ## 7. 当前边界
 

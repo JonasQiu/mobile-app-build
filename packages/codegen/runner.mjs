@@ -3,7 +3,7 @@
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { generate } from "./src/generate.js";
@@ -27,6 +27,15 @@ if (existsSync(localEnvFile)) {
     const value = line.slice(separator + 1).trim();
     if (key && process.env[key] === undefined) process.env[key] = value;
   }
+}
+
+// launchd starts user agents with a minimal PATH. Keep the directory that owns
+// the current Node binary visible to npm/codex/next scripts whose shebang uses
+// `/usr/bin/env node`, even when the Runner itself was launched by absolute path.
+const nodeBinDir = dirname(process.execPath);
+const inheritedPath = process.env.PATH || "";
+if (!inheritedPath.split(delimiter).includes(nodeBinDir)) {
+  process.env.PATH = [nodeBinDir, inheritedPath].filter(Boolean).join(delimiter);
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -116,6 +125,8 @@ function reportProgress(projectId, event, jobId) {
     message = "正在校验 Codex 输出的路径、路由、文件数量和外部资源约束";
   } else if (event.stage === "write" && event.phase === "complete") {
     message = `Codex 输出校验通过，已安全写入 ${event.fileCount || 0} 个项目文件`;
+  } else if (event.stage === "build" && event.phase === "infrastructure-retry") {
+    message = "检测到上次是构建环境错误，正在保留页面实现并直接重试 npm ci";
   } else if (event.stage === "build" && event.phase === "start") {
     message = `正在安装锁定依赖并执行生产构建（第 ${event.attempt} 次）`;
   } else if (event.stage === "done") {
@@ -433,6 +444,9 @@ async function executeJob(job, controller) {
       throwIfPaused(signal);
       if (!result.ok) {
         const detail = String(result.buildLog || "").trim().slice(-600);
+        if (result.infrastructureError) {
+          throw new Error(`构建执行环境不可用${detail ? `：${detail}` : ""}`);
+        }
         throw new Error(`失败步骤在 ${result.attempts} 次修复后仍未通过${detail ? `：${detail}` : ""}`);
       }
       checkpoints = await inspectCheckpoints({ outDir, specWorkRoot, requirement: job.requirement });

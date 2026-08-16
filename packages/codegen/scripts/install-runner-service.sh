@@ -13,6 +13,8 @@ stable_env="${config_dir}/runner.env"
 stable_tunnel="${state_dir}/cloudflared"
 plist_path="${agent_dir}/${service_label}.plist"
 node_bin="$(realpath "$(command -v node)")"
+node_dir="${node_bin:h}"
+service_path="${node_dir}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 if [[ ! -f "${source_env}" ]]; then
   print -u2 "Runner environment file not found: ${source_env}"
@@ -62,6 +64,8 @@ cat > "${plist_path}" <<PLIST
   <dict>
     <key>CODEGEN_LOCAL_ENV_FILE</key>
     <string>${stable_env}</string>
+    <key>PATH</key>
+    <string>${service_path}</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
