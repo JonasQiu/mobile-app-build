@@ -74,6 +74,7 @@ flowchart LR
 8. **历史项目管理**：支持历史详情、项目删除、Markdown 规格文档和构建日志预览。
 9. **并发控制**：单用户最多同时执行 2 个任务，由服务端原子占位。
 10. **证据式交付**：只有规格、构建和部署三项证据全部通过，系统才会保存交付 URL。
+11. **Runner 自恢复**：macOS LaunchAgent 负责登录自启和异常保活；临时入口失效时可在页面一键换址、校验并重新派发任务。
 
 ## 3. 技术方案
 
@@ -83,7 +84,7 @@ flowchart LR
 |---|---|---|
 | Web 控制面 | Next.js、React、TypeScript、vinext | 登录、需求输入、历史记录、进度与产物展示 |
 | 托管与数据 | OpenAI Sites、Cloudflare Workers、D1 | 控制站部署、会话与项目终态持久化 |
-| 执行面 | Node.js Trusted Runner | 调用模型、写文件、运行子进程、构建与部署 |
+| 执行面 | Node.js Trusted Runner、macOS LaunchAgent | 调用模型、写文件、运行子进程、构建与部署，并保持验收 Runner 在线 |
 | AI Provider | Codex CLI / OpenAI API | 生成结构化页面实现与失败修复 |
 | 规格引擎 | 自研 Mobile Spec | Proposal、Specs、Design、Review、Tasks 与门禁 |
 | 页面工程 | Next.js 中立模板 | 承载需求特定的页面与路由实现 |
@@ -109,7 +110,7 @@ Web 控制站运行在 Cloudflare Worker 环境，适合处理 HTTP 请求和持
 flowchart LR
   U[用户浏览器] --> W[Web 控制面<br/>OpenAI Sites / vinext]
   W --> D[(Cloudflare D1)]
-  W -->|Bearer HTTPS| R[Trusted Node Runner]
+  W -->|Bearer HTTPS| R[Trusted Node Runner<br/>LaunchAgent 保活]
   R --> M[Mobile Spec Engine]
   R --> C[Codex CLI / OpenAI API]
   R --> F[隔离文件系统]
@@ -274,12 +275,13 @@ queued → dispatching → building → ready | paused | failed | delivered
 **解决思路：**
 
 - Runner 为控制 API 自动维护独立公网隧道，隧道退出时自动重建；
+- macOS 验收机通过用户级 LaunchAgent 在登录后自动启动 Runner，并在进程异常退出时拉起；环境文件使用 `0600` 权限，隧道二进制保存到用户私有稳定目录；
 - D1 保存最近一次通过验证的 endpoint、Runner 实例编号和登记时间；
 - 控制面优先使用 D1 已验证地址，环境变量只作为冷启动回退；
 - 隧道进程退出时 Runner 自动重建；连接类错误时页面展示“修复连接”；
 - 用户点击后，浏览器从本机 Runner 取得新地址；控制面从公网核对实例编号、健康状态和部署能力，通过后登记并自动按原模式重新派发任务。
 
-**结果：** 临时域名变化不再需要人工修改线上环境变量，同时仍明确 Quick Tunnel 不具备生产 SLA。
+**结果：** 终端或 Codex 会话退出不会再带走 Runner；临时域名变化也不再需要人工修改线上环境变量，同时仍明确 Quick Tunnel 不具备生产 SLA。
 
 ## 6. 安全与可信设计
 
@@ -297,7 +299,7 @@ queued → dispatching → building → ready | paused | failed | delivered
 
 当前系统已经打通可验证的真实交付链路，但距离完整的生产级云构建平台仍有以下边界：
 
-- Runner 当前为常驻 Node 进程，不是弹性 Cloud Runner；
+- Runner 当前由 macOS LaunchAgent 常驻和保活，不是弹性 Cloud Runner；
 - 执行事件保存在 Runner 内存，进程重启后无法恢复正在运行的 Job；
 - 成功检查点与产物保存在 Runner 本地工作区，尚未进入共享对象存储；
 - Runner 控制地址可以自动轮换，但 Quick Tunnel 仍没有固定域名和 SLA，只适合开发与验收；

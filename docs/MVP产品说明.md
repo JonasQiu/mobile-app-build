@@ -32,7 +32,7 @@ flowchart TD
 
 - 应用内 MVP 登录与项目 D1 持久化。
 - 纯文本完整需求；链接可以作为需求文本的一部分。
-- 无关键词模板、无固定业务页面、无健身示例项目。
+- 完整需求直接进入生成流程，不依赖关键词模板或固定业务页面。
 - Mobile Spec：Proposal、Specs、Design、Review、Tasks 和 gate。
 - Codex CLI / OpenAI API 二选一结构化 Provider。
 - 中立 Next.js 模板、完整文件 manifest、安全路径校验。
