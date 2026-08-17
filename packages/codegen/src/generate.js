@@ -6,6 +6,7 @@ import { writeManifest } from "./write.js";
 import { runBuild } from "./build.js";
 import { callLLM } from "./llm.js";
 import { runSpecWorkflow } from "./spec-workflow.js";
+import { generatePreviewSet, readApprovedPreview } from "./preview.js";
 import {
   clearRepairState,
   loadSpecCheckpoint,
@@ -19,7 +20,7 @@ import {
 
 export const MAX_ATTEMPTS = 3;
 
-const GENERATION_STAGES = ["mobile-spec", "implementation", "build"];
+const GENERATION_STAGES = ["mobile-spec", "preview", "implementation", "build"];
 
 function isInfrastructureBuildFailure(result) {
   if (result?.infrastructureError) return true;
@@ -41,6 +42,7 @@ export async function generate({
   startStage = "mobile-spec",
   stopAfterStage = "build",
   resume = true,
+  approvedPreviewId = "",
 }) {
   const progress = typeof onProgress === "function" ? onProgress : () => {};
   const startIndex = stageIndex(startStage);
@@ -70,6 +72,30 @@ export async function generate({
   if (stopAfterStage === "mobile-spec") {
     return { ok: true, outDir, buildOk: false, attempts: 0, manifest: null, specWorkflowOk: true, completedStage: "mobile-spec" };
   }
+
+  if (startIndex <= stageIndex("preview")) {
+    progress({ stage: "preview", phase: "start" });
+    const previews = await generatePreviewSet({ outDir, requirement, spec: sw.specMd });
+    await writeOutputCheckpoint({ outDir, requirement, stage: "preview" });
+    progress({ stage: "preview", phase: "complete", optionCount: previews.options.length, setId: previews.setId });
+  }
+
+  if (stopAfterStage === "preview") {
+    return { ok: true, outDir, buildOk: false, attempts: 0, manifest: null, specWorkflowOk: true, completedStage: "preview" };
+  }
+
+  const approvedPreview = approvedPreviewId
+    ? await readApprovedPreview({ outDir, requirement, previewId: approvedPreviewId })
+    : null;
+  if (!approvedPreview) {
+    throw new Error("进入 Codex 前需要确认当前预览方案");
+  }
+  const previewAnchor = [
+    `方案：${approvedPreview.title}`,
+    `说明：${approvedPreview.description}`,
+    `色板：${approvedPreview.palette.join(", ")}`,
+    `预览方案 ID：${approvedPreview.id}`,
+  ].join("\n");
 
   if (startStage === "build") {
     const savedRepair = resume ? await readRepairState({ outDir, requirement, stage: "build" }) : null;
@@ -173,6 +199,7 @@ export async function generate({
           proposalAnchor: sw.proposalMd,
           designAnchor: sw.designMd,
           tasksAnchor: sw.tasksMd,
+          previewAnchor,
           signal,
         });
       } catch (error) {
@@ -264,6 +291,7 @@ export async function generate({
         proposalAnchor: sw.proposalMd,
         designAnchor: sw.designMd,
         tasksAnchor: sw.tasksMd,
+        previewAnchor,
         signal,
       });
     } catch (error) {

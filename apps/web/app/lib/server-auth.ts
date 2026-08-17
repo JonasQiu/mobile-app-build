@@ -47,6 +47,17 @@ export async function ensureDatabase() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_projects_owner_updated ON projects(owner_user_id, updated_at DESC)"),
+    db.prepare(`CREATE TABLE IF NOT EXISTS project_preview_approvals (
+      project_id TEXT PRIMARY KEY,
+      owner_user_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      preview_set_id TEXT,
+      selected_preview_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      approved_at TEXT
+    )`),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_project_preview_approvals_owner ON project_preview_approvals(owner_user_id, updated_at DESC)"),
     db.prepare(`CREATE TABLE IF NOT EXISTS runner_endpoints (
       id TEXT PRIMARY KEY,
       endpoint TEXT NOT NULL,

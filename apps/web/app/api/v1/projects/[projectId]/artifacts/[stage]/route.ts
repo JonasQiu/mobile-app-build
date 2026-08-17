@@ -1,7 +1,7 @@
 import { getD1, jsonError, requireSession } from "../../../../../../lib/server-auth";
 import { resolveRunnerEndpoint, runnerUrls } from "../../../../../../lib/runner-endpoint";
 
-const STAGES = ["mobile-spec", "implementation", "build", "deployment"];
+const STAGES = ["mobile-spec", "preview", "implementation", "build", "deployment"];
 const RUNNER_TIMEOUT_MS = 12_000;
 
 export async function GET(request: Request, context: RouteContext<"/api/v1/projects/[projectId]/artifacts/[stage]">) {

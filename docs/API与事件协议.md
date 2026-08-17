@@ -48,6 +48,7 @@ flowchart LR
 | `POST` | `/api/v1/projects/{projectId}/jobs` | 服务端派发受信任 Runner |
 | `POST` | `/api/v1/projects/{projectId}/pause` | 校验项目所有权并要求 Runner 真实暂停 |
 | `GET` | `/api/v1/projects/{projectId}/artifacts/{stage}` | 校验所有权后读取指定步骤产物 |
+| `POST` | `/api/v1/projects/{projectId}/preview-approval` | 向 Runner 复核当前 SVG 方案 ID，持久化确认结果 |
 | `POST` | `/api/v1/projects/{projectId}/delivery` | 兼容 Runner 回调，需要 callback token |
 | `GET` | `/api/v1/projects/{projectId}/delivery` | 受信任 Runner 或 Sites owner 读取项目需求 |
 | `GET` | `/api/v1/runner/recover` | 已登录用户查询 Runner 连接状态 |
@@ -70,7 +71,9 @@ flowchart LR
   "executionEvents": [
     { "id": "...", "at": "2026-08-14T00:00:00Z", "stage": "mobile-spec", "kind": "progress", "progress": 4, "message": "任务已进入执行队列" }
   ],
-  "executionCheckpoints": ["mobile-spec"]
+  "executionCheckpoints": ["mobile-spec", "preview"],
+  "previewApprovalStatus": "pending",
+  "selectedPreviewId": null
 }
 ```
 
@@ -78,7 +81,11 @@ flowchart LR
 
 当用户已有 2 个 `dispatching/building` 项目时，`POST /api/projects` 和 jobs 派发返回 `409 EXECUTION_LIMIT_REACHED`。jobs 路由使用单条条件 UPDATE 原子占用名额，防止并发请求绕过计数。
 
-`DELETE /api/projects/{projectId}` 只删除当前用户拥有的记录；`dispatching/building` 项目返回 409，避免 Runner 继续执行但控制面记录消失。`ready/paused` 不占执行名额，可删除、继续、重跑或单步执行。
+`DELETE /api/projects/{projectId}` 只删除当前用户拥有的记录，并同时清理审批行；`dispatching/building` 项目返回 409。`awaiting_approval/ready/paused` 不占执行名额。
+
+### 确认预览
+
+`POST /api/v1/projects/{projectId}/preview-approval` 接受 `{ "previewId": "..." }`。路由校验登录用户和项目所有权，再使用 Runner Bearer token 读取当前 `preview` artifacts；只有 ID 属于当前 preview set 且 `format === "svg"` 时，才以 D1 batch 写入 `approved + previewSetId + selectedPreviewId` 并把项目置为 `ready/preview`。过期 ID 返回 409。浏览器随后重新派发 `continue`，但 Runner 仍会再次校验该 ID，形成控制面和执行面的双重门禁。
 
 ## 4. Runner API（当前实现）
 
@@ -116,11 +123,13 @@ Body：
   "callbackUrl": "https://control.example/api/v1/projects/prj_.../delivery",
   "mode": "continue",
   "targetStage": null,
-  "previousDeliveryUrl": "https://generated.example"
+  "previousDeliveryUrl": "https://generated.example",
+  "approvedPreviewId": "set_..._p2",
+  "regeneratePreview": false
 }
 ```
 
-`mode` 可为 `continue | rerun | step`。`continue` 校验需求哈希、复用成功检查点，并从首个失败位置续修；`rerun` 清除工作区后完整执行；`step` 必须指定 `mobile-spec | implementation | build | deployment` 之一，前置检查点不足时失败，目标已成功时直接复用，目标失败时沿用该步骤错误上下文继续。`previousDeliveryUrl` 由控制面从当前项目记录传入，用于完整部署检查点复用时保留已验证 URL。返回 `202` 与异步 job；相同 `projectId` 正在运行时返回现有 job。控制面的定时拉取覆盖 `queued/dispatching/building/ready/paused/failed`，因此主动回调被外层访问策略阻断时，Runner 的最新可信终态仍可把失败记录校正为已交付；已交付记录不依赖 Runner 内存继续存在。
+`mode` 可为 `continue | rerun | step`。阶段为 `mobile-spec | preview | implementation | build | deployment`。首次 `continue` 在生成 preview checkpoint 后返回 `awaiting_approval`；`rerun` 清除旧工作区并同样停在新的预览门禁；`step preview` 可带 `regeneratePreview: true`，只生成新 preview set，不调用 Codex 或构建。进入 implementation/build/deployment 前，Runner 必须验证 `approvedPreviewId` 属于当前需求的当前 preview set。控制面的定时拉取覆盖 `queued/dispatching/building/ready/awaiting_approval/paused/failed`。
 
 兼容升级前工作区：若需求文件内容一致、五份规格文档完整、manifest 存在，并且 `.next/BUILD_ID` 与 Next 可执行文件存在，Runner 会一次性写入新 marker，把现有成功结果作为 Mobile Spec、implementation、build 检查点复用。
 
@@ -134,11 +143,11 @@ Body：
 {
   "job": {
     "id": "job_...",
-    "status": "running",
-    "stage": "implementation",
-    "progress": 64,
-    "message": "Mobile Spec 已通过，Codex 正在实现页面",
-    "checkpoints": ["mobile-spec"],
+    "status": "awaiting_approval",
+    "stage": "preview",
+    "progress": 56,
+    "message": "3 份预览已就绪；请选择一份并确认",
+    "checkpoints": ["mobile-spec", "preview"],
     "events": [
       { "id": "...", "at": "2026-08-14T00:00:00Z", "message": "Runner 已接收任务" }
     ],
@@ -163,7 +172,7 @@ Body：
 }
 ```
 
-失败包含 `status: "failed"`、`stage: "failed"` 和裁剪后的 `error`。
+等待确认包含 `status: "awaiting_approval"`，Runner 同时以 `approval_required` 回调控制面并释放执行名额。失败包含 `status: "failed"`、`stage: "failed"` 和裁剪后的 `error`。
 
 新完成或复用的非部署单步包含 `status: "checkpointed"`、指定 `stage` 和已完成的 `checkpoints`，控制面将项目写为 `ready`，不生成新交付 URL。如果已有完整 deployment 检查点、三项证据和外部 URL，则返回原 `delivered`，不重新部署也不丢失 URL。
 
@@ -179,7 +188,7 @@ Mobile Spec 使用独立子阶段 marker 保存 propose/design/task 的连续成
 
 ### 读取步骤产物
 
-`POST /jobs/{projectId}/artifacts/{stage}` 仅接受 Runner Bearer token，并由控制面在 body 中传入项目原始需求做哈希校验。`mobile-spec` 返回 Proposal、Spec、Design、Review、Tasks 五份 `format: markdown` 文件；`implementation` 返回生成清单；`build` 返回真实构建日志；`deployment` 返回 URL 与健康检查证据。浏览器只访问所有权隔离的控制站 GET 代理。
+`POST /jobs/{projectId}/artifacts/{stage}` 仅接受 Runner Bearer token，并由控制面在 body 中传入项目原始需求做哈希校验。`mobile-spec` 返回五份 Markdown；`preview` 返回 3 份带 `id/setId/title/description` 的 `format: svg` 文件；`implementation` 返回生成清单；`build` 返回真实构建日志；`deployment` 返回 URL 与健康检查证据。
 
 ## 5. 进度与 message 映射
 
@@ -190,6 +199,7 @@ Mobile Spec 使用独立子阶段 marker 保存 propose/design/task 的连续成
 | spec-propose | mobile-spec | 18 | Proposal 与 Specs |
 | spec-design | mobile-spec | 36 | Design 与 Review |
 | spec-task | mobile-spec | 52 | Tasks 与 gate |
+| preview | preview | 56 | 生成 3 份 SVG 并等待确认 |
 | llm | implementation | 64 | Codex 生成页面 |
 | write | implementation | 72 | 写入项目文件 |
 | retry | implementation | 76 | 根据构建日志修复 |
@@ -208,7 +218,7 @@ Mobile Spec 使用独立子阶段 marker 保存 propose/design/task 的连续成
 
 | 存储位置 | 数据内容 | 角色 |
 |---|---|---|
-| Cloudflare D1 | users / projects 表；sessions 仅兼容保留 | 项目**终态**来源（source of truth） |
+| Cloudflare D1 | users / projects / project_preview_approvals；sessions 仅兼容保留 | 项目终态与预览审批来源 |
 | Runner 内存 | job / progress / message / events / evidence | **执行中**状态来源，重启即丢失 |
 | Runner 工作区 | requirement-scoped checkpoints / Markdown / manifest / build log / deployment evidence | 成功阶段复用与产物查看 |
 
@@ -220,7 +230,9 @@ Schema 双份维护：Drizzle 定义在 `apps/web/db/schema.ts`（迁移文件�
 
 **sessions**：旧本地会话兼容表，当前请求鉴权不再读取。
 
-**projects**：`id`（`prj_` + UUID）、`owner_user_id`（所有查询带此条件做行级隔离）、`name`（≤100 字符）、`prompt`（≤4000 字符）、`status`、`current_stage`、`preview_url`（仅 delivered 时写入）、`created_at` / `updated_at`（索引 `(owner_user_id, updated_at DESC)`）。
+**projects**：`id`（`prj_` + UUID）、`owner_user_id`、`name`、`prompt`、`status`、`current_stage`、`preview_url`（仅 delivered 时写入）、时间戳。
+
+**project_preview_approvals**：以 `project_id` 为主键，保存 `owner_user_id`、`pending|approved`、`preview_set_id`、`selected_preview_id`、`approved_at`。预览图片本体仍在 Runner 工作区，D1 只保存审批事实和集合身份。
 
 ### 核心数据流
 
@@ -239,7 +251,9 @@ stateDiagram-v2
   dispatching --> queued: 派发失败回滚
   dispatching --> failed: 2 分钟未确认 / Runner 报 failed
   building --> building: 轮询更新 current_stage
-  building --> ready: 单步执行成功
+  building --> awaiting_approval: preview checkpoint 完成
+  awaiting_approval --> dispatching: 确认方案后继续 / 换一组
+  building --> ready: 其他单步执行成功
   building --> delivered: evidence 齐全 + URL 校验通过
   building --> failed: 任一阶段失败 / evidence 缺失
   ready --> dispatching: 继续 / 重跑 / 单步

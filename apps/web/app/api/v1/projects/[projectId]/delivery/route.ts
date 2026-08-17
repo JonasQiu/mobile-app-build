@@ -33,7 +33,9 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
       ? "failed"
       : body?.status === "paused"
         ? "paused"
-        : body?.status === "checkpointed" ? "ready" : "building";
+        : body?.status === "approval_required"
+          ? "awaiting_approval"
+          : body?.status === "checkpointed" ? "ready" : "building";
   const stage = typeof body?.stage === "string" ? body.stage.slice(0, 40) : status;
   const url = typeof body?.url === "string" ? body.url.slice(0, 1000) : null;
 
@@ -41,6 +43,24 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
     const evidence = body?.evidence;
     if (!evidence?.mobileSpecPassed || !evidence.buildPassed || !evidence.deployPassed || !url || !validDeliveryUrl(url, new URL(request.url).hostname)) {
       return jsonError("交付证据或 HTTPS 部署 URL 不完整", 422);
+    }
+  }
+
+  if (status === "awaiting_approval") {
+    await getD1().prepare(`INSERT INTO project_preview_approvals (
+      project_id, owner_user_id, status, preview_set_id, selected_preview_id, approved_at
+    ) SELECT id, owner_user_id, 'pending', NULL, NULL, NULL FROM projects WHERE id = ?
+    ON CONFLICT(project_id) DO UPDATE SET
+      owner_user_id = excluded.owner_user_id,
+      status = CASE WHEN project_preview_approvals.status = 'approved' THEN 'approved' ELSE 'pending' END,
+      preview_set_id = CASE WHEN project_preview_approvals.status = 'approved' THEN project_preview_approvals.preview_set_id ELSE NULL END,
+      selected_preview_id = CASE WHEN project_preview_approvals.status = 'approved' THEN project_preview_approvals.selected_preview_id ELSE NULL END,
+      approved_at = CASE WHEN project_preview_approvals.status = 'approved' THEN project_preview_approvals.approved_at ELSE NULL END,
+      updated_at = CURRENT_TIMESTAMP`).bind(projectId).run();
+    const currentApproval = await getD1().prepare(`SELECT status FROM project_preview_approvals
+      WHERE project_id = ? LIMIT 1`).bind(projectId).first<{ status: string }>();
+    if (currentApproval?.status === "approved") {
+      return Response.json({ ok: true }, { headers: { "cache-control": "no-store" } });
     }
   }
 

@@ -40,6 +40,19 @@ export const projects = sqliteTable("projects", {
   index("idx_projects_owner_updated").on(table.ownerUserId, table.updatedAt),
 ]);
 
+export const projectPreviewApprovals = sqliteTable("project_preview_approvals", {
+  projectId: text("project_id").primaryKey(),
+  ownerUserId: text("owner_user_id").notNull(),
+  status: text("status").notNull().default("pending"),
+  previewSetId: text("preview_set_id"),
+  selectedPreviewId: text("selected_preview_id"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  approvedAt: text("approved_at"),
+}, (table) => [
+  index("idx_project_preview_approvals_owner").on(table.ownerUserId, table.updatedAt),
+]);
+
 export const runnerEndpoints = sqliteTable("runner_endpoints", {
   id: text("id").primaryKey(),
   endpoint: text("endpoint").notNull(),

@@ -5,7 +5,7 @@
 
 ## 1. 一句话介绍
 
-SiteForge AI 是一套面向非技术用户的智能网站生成与交付平台。用户输入一句自然语言需求后，系统会完成需求结构化、页面规格设计、AI 代码生成、生产构建、公网部署与健康检查，最终返回一个可以直接访问的网站 URL。
+SiteForge AI 是一套面向非技术用户的智能网站生成与交付平台。用户输入一句自然语言需求后，系统会完成需求结构化和页面规格设计，先展示 3 份视觉预览供用户选择，确认后再执行 AI 代码生成、生产构建、公网部署与健康检查，最终返回一个可以直接访问的网站 URL。
 
 这个项目解决的不是“让 AI 输出一段页面代码”，而是“如何把一句模糊需求稳定地转换成经过验证、能够真实访问的交付结果”。
 
@@ -38,7 +38,10 @@ flowchart LR
   B --> C[保存原始需求并隔离用户数据]
   C --> D[派发可信 Runner]
   D --> E[Mobile Spec 规格与门禁]
-  E --> F[Codex 生成页面实现]
+  E --> P[生成 3 份视觉预览]
+  P --> Q[用户选择并确认]
+  Q -->|换一组| P
+  Q --> F[Codex 生成页面实现]
   F --> G[依赖安装与生产构建]
   G --> H[部署独立站点]
   H --> I[公网健康检查]
@@ -59,7 +62,7 @@ flowchart LR
 
 ![SiteForge AI 执行进度与证据式交付](./images/siteforge-ai/execution-detail.png)
 
-执行详情展示需求、Mobile Spec、Codex、构建、部署和完成六个阶段。用户可以查看实时消息、阶段产物、最终交付入口，也可以继续、重跑或单独执行某一个步骤。
+执行详情展示需求、Mobile Spec、预览、Codex、构建、部署和完成七个阶段。预览区横向展示 3 张方案图，用户可以选择、“换一组”或“确认生成”；未确认时不会启动 Codex。用户还可以查看实时消息、阶段产物和最终交付入口。
 
 > 配图使用真实产品前端与脱敏演示数据生成，不包含用户账号、密钥或真实业务数据。
 
@@ -68,15 +71,16 @@ flowchart LR
 1. **一句话生成网站**：保存用户的完整需求，不进行关键词分类或固定模板匹配。
 2. **ChatGPT 多用户登录**：访问者使用自己的 ChatGPT 账号登录，需求、历史和产物按稳定用户 ID 隔离；模型、Runner、构建和部署统一使用平台配置。
 3. **Mobile Spec 规格工作流**：生成 Proposal、Specs、Design、Review 和 Tasks，并通过确定性门禁。
-4. **AI 结构化实现**：支持 Codex CLI 或 OpenAI Structured Outputs，输出符合约束的 SiteManifest。
-5. **真实生产构建**：执行锁定依赖安装和 `next build`，构建失败时将真实日志反馈给 Codex 定向修复。
-6. **实时执行进度**：每 15 秒同步 Runner 的进度、当前消息和最近事件，而不是由前端计时器模拟。
-7. **暂停与恢复**：可以中断 Mobile Spec、模型调用、依赖安装、构建或健康检查，并从成功检查点继续。
-8. **单步骤执行**：规格、实现、构建和部署可以独立执行和查看产物。
-9. **历史项目管理**：支持历史详情、项目删除、Markdown 规格文档和构建日志预览。
-10. **并发控制**：平台共享 Runner 最多同时执行 2 个任务，由服务端全局原子占位。
-11. **证据式交付**：只有规格、构建和部署三项证据全部通过，系统才会保存交付 URL。
-12. **Runner 自恢复**：macOS LaunchAgent 负责登录自启和异常保活；临时入口失效时自动换址、验证并登记，页面按钮作为人工兜底。
+4. **多方案预览门禁**：Mobile Spec 后生成 3 份需求专属 SVG；确认状态跨刷新保存，失效 ID 无法进入 Codex，“换一组”不触发正式构建。
+5. **AI 结构化实现**：支持 Codex CLI 或 OpenAI Structured Outputs，已确认方向和色板作为实现约束，输出符合 Schema 的 SiteManifest。
+6. **真实生产构建**：执行锁定依赖安装和 `next build`，构建失败时将真实日志反馈给 Codex 定向修复。
+7. **实时执行进度**：每 15 秒同步 Runner 的进度、当前消息和最近事件，而不是由前端计时器模拟。
+8. **暂停与恢复**：可以中断 Mobile Spec、模型调用、依赖安装、构建或健康检查，并从成功检查点继续。
+9. **单步骤执行**：规格、预览、实现、构建和部署可以独立执行和查看产物。
+10. **历史项目管理**：支持历史详情、项目删除、Markdown 规格、SVG 方案和构建日志预览。
+11. **并发控制**：平台共享 Runner 最多同时执行 2 个任务；等待用户确认时立即释放名额。
+12. **证据式交付**：只有预览确认、规格、构建和部署证据全部通过，系统才会保存交付 URL。
+13. **Runner 自恢复**：macOS LaunchAgent 负责登录自启和异常保活；临时入口失效时自动换址、验证并登记，页面按钮作为人工兜底。
 
 ## 3. 技术方案
 
@@ -117,6 +121,9 @@ flowchart LR
   R --> C[Codex CLI / OpenAI API]
   R --> F[隔离文件系统]
   F --> K[阶段检查点与产物]
+  K --> V[3 份 SVG 预览]
+  W --> A[(D1 预览审批)]
+  A --> R
   R --> B[npm ci / next build]
   R --> P[Deployment Provider]
   P --> H[外部 HTTPS 网站]
@@ -141,6 +148,13 @@ sequenceDiagram
   R-->>W: 返回异步 Job ID
   R->>M: 生成并验证规格文档
   M-->>R: Gate 结果
+  R->>R: 生成 3 份 SVG 视觉方案
+  R-->>W: awaiting_approval
+  W->>D: 保存 pending 审批
+  W-->>U: 展示多图并等待选择
+  U->>W: 确认 previewId
+  W->>R: 校验当前 preview artifact
+  W->>D: 保存 approved / setId / selectedId
   R->>C: 结构化生成页面实现
   C-->>R: SiteManifest
   R->>R: 文件校验、npm ci、生产构建
@@ -160,7 +174,7 @@ sequenceDiagram
 
 系统将 D1 和 Runner 的职责分开：
 
-- D1 保存需求、项目状态、当前阶段和最终交付 URL；
+- D1 保存需求、项目状态、当前阶段、预览审批和最终交付 URL；
 - Runner 内存保存执行中的 Job、进度、消息和最近事件；
 - Runner 工作区保存需求哈希绑定的检查点、规格文档、生成清单、构建日志和部署证据；
 - 控制站主动拉取 Runner 状态，并在获得可信终态后更新 D1；
@@ -169,21 +183,22 @@ sequenceDiagram
 主要状态流转为：
 
 ```text
-queued → dispatching → building → ready | paused | failed | delivered
+queued → dispatching → building → awaiting_approval → dispatching → building → ready | paused | failed | delivered
 ```
 
-其中 `ready` 表示某个单独步骤已经成功并保存产物；`delivered` 表示完整流程及交付证据均已通过。
+其中 `awaiting_approval` 表示 3 份预览已保存并释放 Runner 执行名额；`ready` 表示其他单步已经成功；`delivered` 表示完整流程及交付证据均已通过。
 
 ### 4.4 检查点设计
 
 检查点按照需求哈希隔离，避免复用其他需求的结果：
 
 - Mobile Spec 保存 propose、design、task 等子阶段进度；
+- preview 保存集合清单与 3 份 SVG；换一组只失效该阶段及下游，确认 ID 同时由控制面和 Runner 校验；
 - implementation 保存结构化生成清单与文件账本；
 - build 保存生产构建标记和真实日志；
 - deployment 保存外部 URL、健康检查时间和交付证据。
 
-`continue` 从第一个未完成或失败的位置继续，`step` 只运行指定步骤，只有 `rerun` 会清空检查点并从头执行。
+首次 `continue` 在 preview 后停止；确认后下一次 `continue` 才进入 Codex。`step` 只运行指定步骤，只有 `rerun` 会清空全部检查点并从头执行。
 
 ## 5. 关键困难与解决思路
 
@@ -215,7 +230,21 @@ queued → dispatching → building → ready | paused | failed | delivered
 
 **结果：** 部署问题只修复部署，构建问题只修复构建，显著减少无效重复执行。
 
-### 5.3 如何控制 AI 输出的不确定性
+### 5.3 如何在高成本生成前让用户确认方向
+
+**问题：** 一句话需求可以对应多种视觉方案。如果直接进入 Codex，页面即使能构建，也可能在风格和信息密度上偏离用户预期，造成整轮生成与构建浪费。
+
+**解决思路：**
+
+- Mobile Spec 通过后由 Runner 生成 3 份需求专属 SVG 评审图，只写预览产物，不写正式网站源码；
+- Runner 回调 `approval_required`，项目进入 D1 持久化的 `awaiting_approval`，同时释放并发名额；
+- 用户确认时，控制面重新读取 Runner 当前 artifacts 校验 `previewId + setId`，防止浏览器伪造或选择过期方案；
+- Runner 在进入 implementation、build 或 deployment 前再次校验方案 ID；
+- “换一组”只失效 preview 及下游检查点，仍然不会调用 Codex；已确认方案的方向、说明和色板进入生成提示词。
+
+**结果：** 产品形成“先看方向、再付出生成成本”的人机协作门禁，同时保持后端可验证，避免把一张前端选中态当成真实审批。
+
+### 5.4 如何控制 AI 输出的不确定性
 
 **问题：** 模型可能生成重复路由、缺失页面、危险路径、外部字体依赖或不完整文件，直接写入文件系统会带来构建和安全风险。
 
@@ -230,7 +259,7 @@ queued → dispatching → building → ready | paused | failed | delivered
 
 **结果：** 将开放式代码生成转换为“受 Schema 约束、可验证、可修复”的工程流水线。
 
-### 5.4 临时部署域名无法解析
+### 5.5 临时部署域名无法解析
 
 **问题：** Cloudflare Quick Tunnel 已返回域名并注册连接，但本机系统 DNS 仍可能持续返回 `Could not resolve host`，导致健康检查把已存在的域名误判为部署失败。
 
@@ -244,7 +273,7 @@ queued → dispatching → building → ready | paused | failed | delivered
 
 **结果：** 实际问题中第一次系统 DNS 失败，第二次通过公共 DNS 回退获得 HTTP 200，任务成功进入 `delivered`。
 
-### 5.5 控制站与 Runner 状态不一致
+### 5.6 控制站与 Runner 状态不一致
 
 **问题：** 控制站外层访问策略可能阻止 Runner 主动回调，出现 Runner 已成功但 D1 仍显示失败的情况。
 
@@ -257,7 +286,7 @@ queued → dispatching → building → ready | paused | failed | delivered
 
 **结果：** 即使主动回调失败，页面刷新后仍能恢复正确的交付状态和 URL。
 
-### 5.6 暂停和并发控制
+### 5.7 暂停和并发控制
 
 **问题：** AI 调用、安装、构建和健康检查都可能占用较长时间，仅在 UI 中修改状态并不能真正停止资源消耗。
 
@@ -270,7 +299,7 @@ queued → dispatching → building → ready | paused | failed | delivered
 
 **结果：** 暂停是执行层真实停止，而不是界面上的状态切换。
 
-### 5.7 Runner 临时地址反复失效
+### 5.8 Runner 临时地址反复失效
 
 **问题：** 控制面最初直接读取环境变量中的 Quick Tunnel 地址。Runner 或隧道重启后域名会变化，旧地址无法解析，导致任务在派发前持续返回“Runner 当前不可用”。
 
@@ -299,7 +328,7 @@ queued → dispatching → building → ready | paused | failed | delivered
 - 生成文件经过路径、扩展名和路由校验；
 - 浏览器无权写入最终状态和交付 URL；
 - Secret 只存在于受控环境变量，不进入日志、文档和 Git；
-- 当前已建立 46 项 Runner 测试、14 项 Web 契约测试，并执行 ESLint、生产构建和文档检查。
+- 当前已建立 48 项 Runner 测试、15 项 Web 契约测试，并执行 ESLint、生产构建和文档检查。
 
 ## 7. 当前边界
 

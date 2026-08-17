@@ -42,9 +42,10 @@ export function buildPrompt({
   proposalAnchor,
   designAnchor,
   tasksAnchor,
+  previewAnchor,
 }) {
-  if (!specAnchor || !proposalAnchor || !designAnchor || !tasksAnchor) {
-    throw new Error("Validated Mobile Spec artifacts are required before code generation");
+  if (!specAnchor || !proposalAnchor || !designAnchor || !tasksAnchor || !previewAnchor) {
+    throw new Error("Validated Mobile Spec artifacts and an approved preview are required before code generation");
   }
 
   const messages = [
@@ -52,6 +53,10 @@ export function buildPrompt({
     {
       role: "system",
       content: `# 本次 Mobile Spec（权威契约）\n\n## Proposal\n${proposalAnchor}\n\n## Spec\n${specAnchor}\n\n## Design\n${designAnchor}\n\n## Tasks\n${tasksAnchor}`,
+    },
+    {
+      role: "system",
+      content: `# 用户已确认的视觉方向（实现约束）\n${previewAnchor}\n\n页面的色彩、信息密度、层级和整体风格必须遵循该方向；不得自行切换到未确认方案。`,
     },
   ];
 

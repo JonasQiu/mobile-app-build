@@ -2,7 +2,7 @@
 
 ## 1. 产品定位
 
-Mobile Build 是一个移动端网站生成入口。用户提交一句完整需求，受信任 Runner 将其转成 Mobile Spec，调用 Codex 实现 Next.js 页面，完成生产构建和部署检查，最后返回独立 HTTPS URL。
+Mobile Build 是一个移动端网站生成入口。用户提交一句完整需求，受信任 Runner 将其转成 Mobile Spec，先提供 3 份视觉预览供确认，再调用 Codex 实现 Next.js 页面，完成生产构建和部署检查，最后返回独立 HTTPS URL。
 
 产品不允许浏览器用定时器、模板或记录页模拟执行；用户看到的进度必须来自 Runner 状态。
 
@@ -16,7 +16,10 @@ flowchart TD
   D --> E[Mobile Spec 门禁]
   D -->|用户暂停| L[paused]
   L -->|继续并复用检查点| D
-  E --> F[Codex 实现]
+  E --> P[生成 3 份视觉预览]
+  P --> Q[awaiting_approval]
+  Q -->|换一组| P
+  Q -->|用户确认方案| F[Codex 实现]
   F --> G[npm ci 与生产构建]
   E -->|子阶段失败| E
   G -->|保留日志并定向修复| F
@@ -26,7 +29,7 @@ flowchart TD
   J --> K[历史详情中打开页面]
 ```
 
-执行页展示六个阶段：需求、Mobile Spec、Codex、构建、部署、完成。执行中每 15 秒同步百分比、当前 message 和最近事件，包含 Codex 生成、文件校验写入、构建修复，以及公网健康检查每次探测的 HTTP 或网络结果。运行中可真实暂停；“继续”复用成功检查点并从失败位置续修，“重跑”才清除检查点。输入框上方可单独执行规格、实现、构建或部署；已成功单步直接复用，失败单步不从该步骤开头重做。阶段卡片可打开独立产物面板，`.md` 文件按 Markdown 渲染。历史项目可点击恢复同一详情视图，非进行中记录允许删除。
+执行页展示七个阶段：需求、Mobile Spec、预览、Codex、构建、部署、完成。Mobile Spec 通过后展示 3 张可选择的 SVG 评审图；“换一组”只重做预览，“确认生成”会持久化所选方案并继续 Codex。确认前服务端和 Runner 都阻断实现与构建。执行中每 15 秒同步百分比、当前 message 和最近事件。运行中可真实暂停；“继续”复用成功检查点并从失败位置续修，“重跑”才清除检查点。输入框上方可单独执行规格、预览、实现、构建或部署。阶段卡片可打开独立产物面板，`.md` 文件按 Markdown 渲染。历史项目可点击恢复同一详情视图，非进行中记录允许删除。
 
 ## 3. 已实现范围
 
@@ -34,13 +37,14 @@ flowchart TD
 - 纯文本完整需求；链接可以作为需求文本的一部分。
 - 完整需求直接进入生成流程，不依赖关键词模板或固定业务页面。
 - Mobile Spec：Proposal、Specs、Design、Review、Tasks 和 gate。
+- 需求专属的 3 份 SVG 视觉预览、跨刷新审批状态、失效方案校验与 Codex 前硬门禁。
 - Codex CLI / OpenAI API 二选一结构化 Provider。
 - 中立 Next.js 模板、完整文件 manifest、安全路径校验。
 - 可复现依赖安装、生产构建、失败日志修复。
 - Runner 实时 progress/message/events 与历史项目详情。
 - 平台共享 Runner 全站最多同时执行 2 个需求；服务端原子占位并拒绝第三个任务。
 - Runner 协作式暂停、子进程终止、检查点继续与显式完整重跑；暂停任务立即释放执行名额。
-- 四个执行阶段支持单步运行与前置检查；规格文档、实现清单、构建日志和部署证据可独立查看。
+- 五个执行阶段支持单步运行与前置检查；规格文档、SVG 预览、实现清单、构建日志和部署证据可独立查看。
 - Mobile Spec 保存 propose/design/task 子阶段进度；Codex 与构建保存最近错误，下一次只修复当前失败位置。
 - 外部 HTTPS URL 检查与三项交付 evidence。
 
@@ -68,17 +72,18 @@ flowchart TD
 
 当前项目状态：
 
-`queued → dispatching → building → ready | delivered`
+`queued → dispatching → building → awaiting_approval → dispatching → building → ready | delivered`
 
-可继续或重跑的状态：`ready`、`paused`、`failed`、`delivered`。`ready` 表示指定单步执行成功并已保存检查点。`currentStage` 使用：
+`awaiting_approval` 不占 Runner 执行名额，只允许选择、确认或重新生成预览。可继续或重跑的状态：`ready`、`paused`、`failed`、`delivered`。`ready` 表示指定单步执行成功并已保存检查点。`currentStage` 使用：
 
-`requirement | mobile-spec | implementation | build | deployment | paused | delivered | failed`
+`requirement | mobile-spec | preview | implementation | build | deployment | paused | delivered | failed`
 
 `dispatching` 是控制站已原子占用并发名额、正在等待 Runner 接受任务的短暂状态；Runner 确认后进入 `building`，明确拒绝时回到原状态，响应未知超过 2 分钟则失败并释放名额。
 
 只有以下条件同时成立才允许保存 `delivered`：
 
 - Mobile Spec artifacts 与所有 gate 通过。
+- 当前 preview set 至少包含 2 份有效 SVG，所选方案 ID 已由控制面向 Runner 复核并持久化；Codex 提示词包含已确认方向和色板。
 - `npm run build` 成功。
 - DeploymentProvider 返回非 localhost、非控制站、非 `/preview` 的 HTTPS URL。
 - 公网健康检查返回非 5xx。

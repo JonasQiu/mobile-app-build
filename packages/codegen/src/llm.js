@@ -12,9 +12,9 @@ import { callCodexStructured } from "./codex-cli.js";
 // (response_format json_schema) are required, so pick a model that supports it.
 const DEFAULT_MODEL = "gpt-4o";
 
-export async function callLLM({ requirement, attempt, prevBuildError, apiKey, model, specAnchor, proposalAnchor, designAnchor, tasksAnchor, signal }) {
+export async function callLLM({ requirement, attempt, prevBuildError, apiKey, model, specAnchor, proposalAnchor, designAnchor, tasksAnchor, previewAnchor, signal }) {
   const key = apiKey || process.env.OPENAI_API_KEY;
-  const messages = buildPrompt({ requirement, attempt, prevBuildError, specAnchor, proposalAnchor, designAnchor, tasksAnchor });
+  const messages = buildPrompt({ requirement, attempt, prevBuildError, specAnchor, proposalAnchor, designAnchor, tasksAnchor, previewAnchor });
   const resolvedModel = model || process.env.CODEGEN_MODEL || DEFAULT_MODEL;
 
   if (!key) {

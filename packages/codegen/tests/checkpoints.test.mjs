@@ -15,6 +15,7 @@ import {
   writeRepairState,
   writeSpecCheckpoint,
 } from "../src/checkpoints.js";
+import { generatePreviewSet } from "../src/preview.js";
 
 test("successful stages create requirement-scoped checkpoints and viewable artifacts", async () => {
   const root = await mkdtemp(join(tmpdir(), "mobile-build-checkpoints-"));
@@ -43,10 +44,16 @@ test("successful stages create requirement-scoped checkpoints and viewable artif
     await writeSpecCheckpoint({ specWorkRoot, requirement, workflowResult: { change, pageSpecId } });
     assert.deepEqual(await inspectCheckpoints({ outDir, specWorkRoot, requirement }), ["mobile-spec"]);
 
-    await mkdir(outDir, { recursive: true });
+    await generatePreviewSet({ outDir, requirement, spec: docs.specMd, generation: 1 });
+    await writeOutputCheckpoint({ outDir, requirement, stage: "preview" });
+    assert.deepEqual(await inspectCheckpoints({ outDir, specWorkRoot, requirement }), ["mobile-spec", "preview"]);
+    const previewArtifacts = await readStageArtifacts({ outDir, specWorkRoot, requirement, stage: "preview" });
+    assert.equal(previewArtifacts.artifacts.length, 3);
+    assert.ok(previewArtifacts.artifacts.every((artifact) => artifact.format === "svg"));
+
     await writeFile(join(outDir, "mobile-build-manifest.json"), "{\"files\":[]}");
     await writeOutputCheckpoint({ outDir, requirement, stage: "implementation" });
-    assert.deepEqual(await inspectCheckpoints({ outDir, specWorkRoot, requirement }), ["mobile-spec", "implementation"]);
+    assert.deepEqual(await inspectCheckpoints({ outDir, specWorkRoot, requirement }), ["mobile-spec", "preview", "implementation"]);
 
     await mkdir(join(outDir, ".next"), { recursive: true });
     await mkdir(join(outDir, "node_modules", ".bin"), { recursive: true });
@@ -64,7 +71,7 @@ test("successful stages create requirement-scoped checkpoints and viewable artif
 
     await writeDeploymentEvidence(outDir, { url: "https://example.com", evidence: { deployPassed: true } });
     await writeOutputCheckpoint({ outDir, requirement, stage: "deployment" });
-    assert.deepEqual(await inspectCheckpoints({ outDir, specWorkRoot, requirement }), ["mobile-spec", "implementation", "build", "deployment"]);
+    assert.deepEqual(await inspectCheckpoints({ outDir, specWorkRoot, requirement }), ["mobile-spec", "preview", "implementation", "build", "deployment"]);
     assert.deepEqual(await inspectCheckpoints({ outDir, specWorkRoot, requirement: "另一个需求" }), []);
   } finally {
     await rm(root, { recursive: true, force: true });

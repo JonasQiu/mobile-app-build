@@ -4,7 +4,7 @@
 
 ## 1. 定位
 
-Mobile Spec 是 Mobile Build 自研的规格驱动交付引擎。它把自然语言需求转成 Proposal、Specs、Design、Review 和 Tasks，并由确定性 gate 决定是否允许进入 Codex 实现、生产构建与部署。
+Mobile Spec 是 Mobile Build 自研的规格驱动交付引擎。它把自然语言需求转成 Proposal、Specs、Design、Review 和 Tasks，并由确定性 gate 决定是否允许生成视觉预览；预览还需用户确认，之后才允许进入 Codex 实现、生产构建与部署。
 
 当前 Web 生成链路已正式使用这套流程；iOS、Android 和 Harmony 已具备 Schema 与生命周期骨架，平台级构建和验证能力按路线图持续完善。
 
@@ -66,10 +66,11 @@ Runner 为每个项目创建隔离工作区，并按以下顺序执行：
 3. 执行 Propose，生成 Proposal 与 Specs 并通过 gate。
 4. 执行 Design，生成 Design 与 Review 并通过 gate。
 5. 执行 Task，生成 Tasks 并通过 gate。
-6. 将通过门禁的 artifact 提供给 Codex 生成页面。
+6. 将通过门禁的 artifact 提供给 Runner 生成 3 份 SVG 视觉方向。
+7. 用户确认当前 preview set 中的一份方案后，将规格和已确认方向共同提供给 Codex。
 7. 执行文件校验、`npm ci`、生产构建、部署与公网健康检查。
 
-任一 Mobile Spec artifact 缺失、状态错误或 gate 失败时，Runner 停止后续实现，不生成交付 URL。失败状态会保存当前子阶段、累计尝试次数和 gate/生成错误，后续继续不会回到 Proposal 起点。
+任一 Mobile Spec artifact 缺失、状态错误或 gate 失败时，Runner 停止后续预览与实现，不生成交付 URL。即使规格已通过，没有有效的预览确认仍然不能进入 Codex。
 
 Mobile Spec 运行中使用 `mobile-spec-progress.json` 保存 `propose → design → task` 的连续成功前缀、`pageSpecId`、各阶段尝试次数与最近错误。继续或失败规格单步会校验需求哈希和文件完整性，复用已成功子阶段，只重新调用当前失败子阶段。全部通过后，Runner 再写入绑定原始需求 SHA-256 的正式规格检查点，记录 `change` 与 `pageSpecId`。只有用户明确选择“重跑”才清除规格与下游工作区。
 

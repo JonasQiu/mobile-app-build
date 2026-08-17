@@ -15,5 +15,7 @@ export async function DELETE(request: Request, context: RouteContext<"/api/proje
   const result = await getD1().prepare(`DELETE FROM projects WHERE id = ? AND owner_user_id = ?
     AND status NOT IN ('dispatching', 'building')`).bind(projectId, user.id).run();
   if (!result.meta.changes) return jsonError("项目状态已变化，请刷新后重试", 409);
+  await getD1().prepare(`DELETE FROM project_preview_approvals WHERE project_id = ? AND owner_user_id = ?`)
+    .bind(projectId, user.id).run();
   return Response.json({ deleted: true, projectId }, { headers: { "cache-control": "no-store" } });
 }

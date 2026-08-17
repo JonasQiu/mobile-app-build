@@ -174,7 +174,7 @@ test("running projects can be paused and terminal projects can continue or rerun
   assert.match(jobsRoute, /targetStage/);
   assert.match(deliveryRoute, /body\?\.status === "paused"/);
   assert.match(projectsRoute, /job\.status === "paused"/);
-  assert.match(projectsRoute, /RUNNER_SYNC_STATUSES = \[\.\.\.ACTIVE_PROJECT_STATUSES, "queued", "ready", "paused", "failed"\]/);
+  assert.match(projectsRoute, /RUNNER_SYNC_STATUSES = \[\.\.\.ACTIVE_PROJECT_STATUSES, "queued", "ready", "awaiting_approval", "paused", "failed"\]/);
 });
 
 test("successful stages are reusable, individually executable, and expose Markdown artifacts", async () => {
@@ -187,6 +187,7 @@ test("successful stages are reusable, individually executable, and expose Markdo
   assert.match(app, /label: "继续"/);
   assert.match(app, /label: "重跑"/);
   assert.match(app, /label: "规格"/);
+  assert.match(app, /label: "预览"/);
   assert.match(app, /label: "实现"/);
   assert.match(app, /label: "构建"/);
   assert.match(app, /label: "部署"/);
@@ -196,6 +197,24 @@ test("successful stages are reusable, individually executable, and expose Markdo
   assert.match(jobsRoute, /复用同一需求中已经成功的步骤/);
   assert.match(deliveryRoute, /body\?\.status === "checkpointed"/);
   assert.match(projectsRoute, /job\.status === "checkpointed"/);
+});
+
+test("multiple previews require persisted approval before Codex execution", async () => {
+  const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
+  const jobsRoute = await readFile(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root), "utf8");
+  const approvalRoute = await readFile(new URL("app/api/v1/projects/[projectId]/preview-approval/route.ts", root), "utf8");
+  const serverAuth = await readFile(new URL("app/lib/server-auth.ts", root), "utf8");
+  const deliveryRoute = await readFile(new URL("app/api/v1/projects/[projectId]/delivery/route.ts", root), "utf8");
+  assert.match(app, /preview-option-grid/);
+  assert.match(app, /确认生成/);
+  assert.match(app, /换一组/);
+  assert.match(app, /artifacts\/preview/);
+  assert.match(jobsRoute, /PREVIEW_APPROVAL_REQUIRED/);
+  assert.match(jobsRoute, /approvedPreviewId/);
+  assert.match(approvalRoute, /artifact\.format === "svg"/);
+  assert.match(approvalRoute, /status = 'approved'/);
+  assert.match(serverAuth, /CREATE TABLE IF NOT EXISTS project_preview_approvals/);
+  assert.match(deliveryRoute, /body\?\.status === "approval_required"/);
 });
 
 test("failed single steps retain their error context and repair in place", async () => {

@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { readPreviewArtifacts, readPreviewSet } from "./preview.js";
 
-export const EXECUTION_STAGES = ["mobile-spec", "implementation", "build", "deployment"];
+export const EXECUTION_STAGES = ["mobile-spec", "preview", "implementation", "build", "deployment"];
 
 const SPEC_MARKER = "mobile-build-checkpoint.json";
 const OUTPUT_MARKER = ".mobile-build-checkpoint.json";
@@ -192,6 +193,9 @@ export async function inspectCheckpoints({ outDir, specWorkRoot, requirement }) 
     }
     marker = await validOutputMarker(outDir, requirement);
   }
+  if (marker?.completedStages.includes("preview") && await readPreviewSet({ outDir, requirement })) {
+    completed.push("preview");
+  }
   if (marker?.completedStages.includes("implementation") && existsSync(join(outDir, "mobile-build-manifest.json"))) {
     completed.push("implementation");
   }
@@ -224,6 +228,9 @@ export async function readStageArtifacts({ outDir, specWorkRoot, requirement, st
         ["tasks.md", "执行任务", spec.tasksMd],
       ].map(([name, label, content]) => ({ name, label, format: "markdown", content })),
     };
+  }
+  if (stage === "preview") {
+    return { stage, checkpointed: true, artifacts: await readPreviewArtifacts({ outDir, requirement }) };
   }
   if (stage === "implementation") {
     return {

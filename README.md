@@ -1,8 +1,8 @@
 # Mobile Build
 
-Mobile Build 是一个移动端网站生成控制台：用户输入一句完整需求，系统通过受信任 Runner 执行 **需求 → Codex → Mobile Spec → 页面实现 → 生产构建 → 部署 → HTTPS URL**。
+Mobile Build 是一个移动端网站生成控制台：用户输入一句完整需求，系统通过受信任 Runner 执行 **需求 → Mobile Spec → 3 份视觉预览 → 用户确认 → Codex 实现 → 生产构建 → 部署 → HTTPS URL**。
 
-当前版本以用户的完整需求为唯一生成输入，不依赖关键词模板或固定业务页面。执行页每 15 秒同步 Runner 真实消息，运行中的任务可暂停；同一对话会复用成功步骤，失败步骤保留错误与子阶段进度并原地修复，只有“重跑”才清除检查点。规格、实现、构建、部署支持单步执行，各步骤产物可独立查看，Markdown 文档直接渲染预览。历史记录支持删除，共享 Runner 全站最多同时执行 2 个需求。只有 Mobile Spec、生产构建、部署和公网健康检查全部通过，项目才进入 `delivered`。
+当前版本以用户的完整需求为唯一生成输入，不依赖关键词模板或固定业务页面。Mobile Spec 通过后，Runner 先生成 3 份需求专属 SVG 评审图并进入持久化的待确认状态；用户选择方案前不会调用 Codex 或写正式网站源码，确认的视觉方向会进入生成约束。执行页每 15 秒同步 Runner 真实消息，运行中的任务可暂停；同一对话会复用成功步骤，失败步骤保留错误与子阶段进度并原地修复，只有“重跑”才清除检查点。规格、预览、实现、构建、部署支持单步执行，各步骤产物可独立查看。历史记录支持删除，共享 Runner 全站最多同时执行 2 个需求。只有预览已确认、Mobile Spec、生产构建、部署和公网健康检查全部通过，项目才进入 `delivered`。
 
 ## 当前链路
 
@@ -10,8 +10,9 @@ Mobile Build 是一个移动端网站生成控制台：用户输入一句完整�
 Mobile Web（OpenAI Sites + D1）
   -> POST /api/v1/projects/{projectId}/jobs
   -> Trusted Node Runner
-       -> Codex CLI 或 OpenAI API Structured Outputs
        -> Mobile Spec Proposal / Specs / Design / Review / Tasks 门禁
+       -> 3 份 SVG 视觉方案 + D1 用户确认门禁
+       -> Codex CLI 或 OpenAI API Structured Outputs
        -> 中立 Next.js 模板 + requirement-specific SiteManifest
        -> npm ci + next build（失败最多修复三轮）
        -> DeploymentProvider + HTTPS health check
@@ -24,12 +25,13 @@ Mobile Web（OpenAI Sites + D1）
 - 使用 ChatGPT 登录；稳定用户 ID 在服务端映射为 D1 用户，需求、历史和产物按用户隔离。ChatGPT 账号只负责身份识别，Codex、Runner、构建和部署统一使用平台配置的能力。
 - 完整原始需求保存，不做关键词分类或固定业务模板匹配。
 - 历史记录点击进入项目详情，恢复需求、状态、消息和交付入口。
-- 六阶段实时进度：需求、Mobile Spec、Codex、构建、部署、完成。
+- 七阶段实时进度：需求、Mobile Spec、预览确认、Codex、构建、部署、完成。
 - Runner 百分比、当前 message 与最近消息流，每 15 秒由服务端可信同步；外层访问策略阻断主动回调时，失败/暂停记录也会从 Runner 终态自动校正。
-- 输入框上方提供“继续、重跑、规格、实现、构建、部署”快捷按钮；成功单步直接复用，失败单步从该步骤的失败位置续修。
+- 输入框上方提供“继续、重跑、规格、预览、实现、构建、部署”快捷按钮；预览支持“换一组”，不会触发 Codex 或构建。
+- 预览方案和审批跨刷新保存；确认接口重新向 Runner 校验当前 SVG 的方案 ID，失效方案不能启动后续实现。
 - 真实暂停会向 Runner 发送中断信号并终止当前 Codex、Mobile Spec、安装、构建或健康检查子进程。
 - 成功步骤写入需求哈希检查点；Mobile Spec 额外记录 Proposal、Design、Tasks 子阶段，Codex/构建记录最近诊断。“继续”从首个未完成或失败位置开始，“重跑”清除旧检查点并完整执行。升级前已有的完整规格、manifest 和生产构建会在首次读取时自动迁移为检查点。
-- Mobile Spec 的 Proposal、Spec、Design、Review、Tasks 以 Markdown 预览；实现清单、构建日志和部署证据也按步骤查看。
+- Mobile Spec 的 Proposal、Spec、Design、Review、Tasks 以 Markdown 预览；3 份 SVG 方案、实现清单、构建日志和部署证据也按步骤查看。
 - Mobile Spec 是硬门禁；缺少 artifacts 或 gate 失败时停止。
 - `npm ci`、`next build`、跨任务保留真实错误日志的 Codex 定向修复，以及外部 HTTPS 健康检查；Quick Tunnel 使用 HTTP/2，系统 DNS 未同步时以公共 DNS 结果完成同一 URL 的 HTTPS 验证，地址或连接仍不可用时在总时限内自动换址，不重跑已成功的规格、实现和构建。修复 manifest 时会清理旧清单遗留的路由文件。
 - 客户端无权把项目标记为已交付或写入 URL。

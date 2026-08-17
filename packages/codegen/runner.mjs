@@ -11,11 +11,13 @@ import { generate } from "./src/generate.js";
 import {
   EXECUTION_STAGES,
   inspectCheckpoints,
+  invalidateOutputAfter,
   readDeploymentEvidence,
   readStageArtifacts,
   writeDeploymentEvidence,
   writeOutputCheckpoint,
 } from "./src/checkpoints.js";
+import { validatePreviewApproval } from "./src/preview.js";
 import { startPreview } from "./src/serve.js";
 import { startQuickTunnel, waitForPublicUrl } from "./src/tunnel.js";
 
@@ -85,6 +87,7 @@ const PROGRESS = {
   "spec-propose": [18, "正在生成 Proposal 与页面规格"],
   "spec-design": [36, "正在生成 Design 并执行设计评审"],
   "spec-task": [52, "正在拆解可执行任务并通过门禁"],
+  preview: [56, "Mobile Spec 已通过，正在生成 3 份可确认预览"],
   llm: [64, "Mobile Spec 已通过，Codex 正在实现页面"],
   write: [72, "正在写入完整项目文件"],
   build: [80, "正在安装锁定依赖并执行生产构建"],
@@ -149,6 +152,8 @@ function reportProgress(projectId, event, jobId) {
     } else {
       message = `生产构建未通过，Codex 将读取真实构建日志并开始第 ${Number(event.attempt) + 1} 次修复`;
     }
+  } else if (event.stage === "preview" && event.phase === "complete") {
+    message = `已生成 ${event.optionCount || 3} 份需求专属预览，等待用户确认后再进入 Codex`;
   } else if (event.phase === "reused" && eventStage.startsWith("spec-")) {
     const label = { "spec-propose": "Proposal 与页面规格", "spec-design": "Design 与设计评审", "spec-task": "任务拆解" }[eventStage] || eventStage;
     message = `${label}已通过，复用子阶段检查点，不重新生成`;
@@ -448,7 +453,7 @@ function nextIncompleteStage(checkpoints) {
 }
 
 function stageLabel(stage) {
-  return { "mobile-spec": "规格", implementation: "实现", build: "构建", deployment: "部署" }[stage] || stage;
+  return { "mobile-spec": "规格", preview: "预览", implementation: "实现", build: "构建", deployment: "部署" }[stage] || stage;
 }
 
 function validPublicUrl(value) {
@@ -491,6 +496,18 @@ async function finishReusedJob(job, { outDir, checkpoints, completedStage, signa
   }, `“${stageLabel(completedStage)}”已成功，直接复用检查点，不重新执行`);
 }
 
+async function waitForPreviewApproval(job, checkpoints, signal) {
+  await callback(job.callbackUrl, { status: "approval_required", stage: "preview" }, signal);
+  if (jobs.get(job.projectId)?.id !== job.id) return;
+  updateJob(job.projectId, {
+    id: job.id,
+    status: "awaiting_approval",
+    stage: "preview",
+    progress: PROGRESS.preview[0],
+    checkpoints,
+  }, "3 份预览已就绪；请选择一份并确认，确认前不会调用 Codex 或开始构建");
+}
+
 async function executeJob(job, controller) {
   const { signal } = controller;
   const slug = slugify(job.projectId);
@@ -510,10 +527,15 @@ async function executeJob(job, controller) {
       await rm(specWorkRoot, { recursive: true, force: true });
       checkpoints = [];
       startStage = "mobile-spec";
+      stopAfterStage = "preview";
       updateJob(job.projectId, { id: job.id, status: "running", stage: "mobile-spec", progress: 7, checkpoints }, "已清除旧检查点，正在从 Mobile Spec 重新执行完整流程");
     } else if (job.mode === "step") {
       const target = job.targetStage;
-      if (checkpoints.includes(target)) {
+      if (checkpoints.includes(target) && !(target === "preview" && job.regeneratePreview)) {
+        if (target === "preview" && !await validatePreviewApproval({ outDir, requirement: job.requirement, previewId: job.approvedPreviewId })) {
+          await waitForPreviewApproval(job, checkpoints, signal);
+          return;
+        }
         await finishReusedJob(job, { outDir, checkpoints, completedStage: target, signal });
         return;
       }
@@ -521,8 +543,16 @@ async function executeJob(job, controller) {
       if (target === "mobile-spec") {
         startStage = "mobile-spec";
         stopAfterStage = "mobile-spec";
+      } else if (target === "preview") {
+        if (!checkpoints.includes("mobile-spec")) throw new Error("生成预览前需要成功的 Mobile Spec 检查点");
+        if (job.regeneratePreview) {
+          await invalidateOutputAfter({ outDir, requirement: job.requirement, stage: "mobile-spec" });
+          checkpoints = await inspectCheckpoints({ outDir, specWorkRoot, requirement: job.requirement });
+        }
+        startStage = "preview";
+        stopAfterStage = "preview";
       } else if (target === "implementation") {
-        if (!checkpoints.includes("mobile-spec")) throw new Error("执行实现前需要成功的 Mobile Spec 检查点");
+        if (!checkpoints.includes("preview")) throw new Error("执行实现前需要成功并确认的预览检查点");
         startStage = "implementation";
         stopAfterStage = "implementation";
       } else if (target === "build") {
@@ -532,9 +562,13 @@ async function executeJob(job, controller) {
       } else if (target === "deployment") {
         if (!checkpoints.includes("build")) throw new Error("执行部署前需要成功的生产构建检查点");
       }
-      const progress = { "mobile-spec": 7, implementation: 58, build: 76, deployment: 90 }[target] || 7;
+      const progress = { "mobile-spec": 7, preview: 56, implementation: 58, build: 76, deployment: 90 }[target] || 7;
       updateJob(job.projectId, { id: job.id, status: "running", stage: target, progress, checkpoints }, `Runner 已接收“${stageLabel(target)}”单步任务`);
     } else {
+      if (checkpoints.includes("deployment")) {
+        await finishReusedJob(job, { outDir, checkpoints, completedStage: "deployment", signal });
+        return;
+      }
       const nextStage = nextIncompleteStage(checkpoints);
       if (!nextStage) {
         await finishReusedJob(job, { outDir, checkpoints, completedStage: "deployment", signal });
@@ -547,13 +581,25 @@ async function executeJob(job, controller) {
       }
       if (nextStage === "mobile-spec") {
         startStage = "mobile-spec";
+        stopAfterStage = "preview";
+      } else if (nextStage === "preview") {
+        startStage = "preview";
+        stopAfterStage = "preview";
       } else if (nextStage === "implementation") {
         startStage = "implementation";
       } else if (nextStage === "build") {
         startStage = "build";
       }
-      const progress = { "mobile-spec": 7, implementation: 58, build: 76, deployment: 90 }[nextStage] || 7;
+      const progress = { "mobile-spec": 7, preview: 56, implementation: 58, build: 76, deployment: 90 }[nextStage] || 7;
       updateJob(job.projectId, { id: job.id, status: "running", stage: nextStage, progress, checkpoints }, checkpoints.length ? `从“${stageLabel(nextStage)}”继续执行` : "Runner 已接收任务，开始生成 Mobile Spec");
+    }
+
+    if ((startStage && ["implementation", "build"].includes(startStage)) || (!startStage && shouldDeploy)) {
+      const approved = await validatePreviewApproval({ outDir, requirement: job.requirement, previewId: job.approvedPreviewId });
+      if (!approved) {
+        await waitForPreviewApproval(job, checkpoints, signal);
+        return;
+      }
     }
 
     throwIfPaused(signal);
@@ -571,6 +617,7 @@ async function executeJob(job, controller) {
         startStage,
         stopAfterStage,
         resume: job.mode !== "rerun",
+        approvedPreviewId: job.approvedPreviewId,
       }), GENERATION_TIMEOUT_MS, "generation");
       throwIfPaused(signal);
       if (!result.ok) {
@@ -581,6 +628,11 @@ async function executeJob(job, controller) {
         throw new Error(`失败步骤在 ${result.attempts} 次修复后仍未通过${detail ? `：${detail}` : ""}`);
       }
       checkpoints = await inspectCheckpoints({ outDir, specWorkRoot, requirement: job.requirement });
+    }
+
+    if (result.completedStage === "preview") {
+      await waitForPreviewApproval(job, checkpoints, signal);
+      return;
     }
 
     if (!shouldDeploy) {
@@ -742,7 +794,7 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
-  const artifactMatch = req.method === "POST" ? req.url?.match(/^\/jobs\/([^/?]+)\/artifacts\/(mobile-spec|implementation|build|deployment)(?:\?.*)?$/) : null;
+  const artifactMatch = req.method === "POST" ? req.url?.match(/^\/jobs\/([^/?]+)\/artifacts\/(mobile-spec|preview|implementation|build|deployment)(?:\?.*)?$/) : null;
   if (artifactMatch) {
     const supplied = req.headers.authorization?.replace(/^Bearer\s+/i, "") || "";
     if (!RUNNER_TOKEN || !supplied || !timingSafeEqual(RUNNER_TOKEN, supplied)) {
@@ -852,6 +904,8 @@ const server = createServer(async (req, res) => {
   const mode = ["continue", "rerun", "step"].includes(requestedMode) ? requestedMode : "";
   const targetStage = typeof body?.targetStage === "string" ? body.targetStage : null;
   const previousDeliveryUrl = typeof body?.previousDeliveryUrl === "string" ? body.previousDeliveryUrl : "";
+  const approvedPreviewId = typeof body?.approvedPreviewId === "string" ? body.approvedPreviewId.trim() : "";
+  const regeneratePreview = body?.regeneratePreview === true;
   if (!projectId || !requirement || !callbackUrl.startsWith("https://")) {
     send(res, 400, { error: "projectId, requirement, and HTTPS callbackUrl are required" });
     return;
@@ -877,6 +931,8 @@ const server = createServer(async (req, res) => {
     mode,
     targetStage,
     previousDeliveryUrl,
+    approvedPreviewId,
+    regeneratePreview,
   };
   jobs.delete(projectId);
   updateJob(projectId, {

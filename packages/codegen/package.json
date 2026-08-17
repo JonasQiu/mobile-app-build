@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Trusted Node runner: requirement -> Codex -> Mobile Spec -> Next.js build -> verified deployment URL.",
+  "description": "Trusted Node runner: requirement -> Mobile Spec -> approved previews -> Codex -> Next.js build -> verified deployment URL.",
   "bin": {
     "mbcodegen": "bin/generate.mjs"
   },

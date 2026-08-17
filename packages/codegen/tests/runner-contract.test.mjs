@@ -80,8 +80,8 @@ test("trusted runner supports single-stage execution and artifact reads", async 
   assert.match(runner, /writeDeploymentEvidence/);
   assert.match(runner, /readStageArtifacts/);
   assert.match(runner, /const artifactMatch/);
-  assert.match(runner, /mobile-spec\|implementation\|build\|deployment/);
-  assert.match(runner, /执行实现前需要成功的 Mobile Spec 检查点/);
+  assert.match(runner, /mobile-spec\|preview\|implementation\|build\|deployment/);
+  assert.match(runner, /执行实现前需要成功并确认的预览检查点/);
   assert.match(runner, /执行构建前需要成功的实现检查点/);
 });
 
@@ -91,7 +91,8 @@ test("failed steps resume in place while only an explicit rerun clears work", as
   const stepBranch = runner.slice(runner.indexOf('} else if (job.mode === "step")'), runner.indexOf("} else {", runner.indexOf('} else if (job.mode === "step")')));
   const continueBranch = runner.slice(runner.indexOf("} else {", runner.indexOf('} else if (job.mode === "step")')), runner.indexOf("throwIfPaused(signal);", runner.indexOf("} else {", runner.indexOf('} else if (job.mode === "step")'))));
   assert.doesNotMatch(stepBranch, /await rm\(/);
-  assert.doesNotMatch(stepBranch, /invalidateOutputAfter/);
+  assert.match(stepBranch, /job\.regeneratePreview/);
+  assert.match(stepBranch, /invalidateOutputAfter/);
   assert.doesNotMatch(continueBranch, /await rm\(/);
   assert.match(runner, /resume: job\.mode !== "rerun"/);
   assert.match(runner, /checkpoints\.includes\(target\)/);
@@ -99,4 +100,19 @@ test("failed steps resume in place while only an explicit rerun clears work", as
   assert.match(generate, /readRepairState\(\{ outDir, requirement, stage: "build" \}\)/);
   assert.match(generate, /prevBuildError: repairError/);
   assert.match(generate, /writeRepairState\(\{ outDir, requirement, stage: "build"/);
+});
+
+test("preview approval is a hard gate before Codex and regeneration does not build", async () => {
+  const runner = await readFile(runnerUrl, "utf8");
+  const generate = await readFile(new URL("../src/generate.js", import.meta.url), "utf8");
+  const preview = await readFile(new URL("../src/preview.js", import.meta.url), "utf8");
+  assert.match(runner, /status: "awaiting_approval"/);
+  assert.match(runner, /status: "approval_required"/);
+  assert.match(runner, /validatePreviewApproval/);
+  assert.match(runner, /stopAfterStage = "preview"/);
+  assert.match(generate, /generatePreviewSet/);
+  assert.match(generate, /readApprovedPreview/);
+  assert.match(generate, /previewAnchor/);
+  assert.match(preview, /DIRECTIONS/);
+  assert.match(preview, /format: "svg"/);
 });

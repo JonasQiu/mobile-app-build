@@ -13,6 +13,8 @@ type ProjectRow = {
   executionMessage?: string;
   executionEvents?: RunnerEvent[];
   executionCheckpoints?: string[];
+  previewApprovalStatus?: string | null;
+  selectedPreviewId?: string | null;
 };
 
 type RunnerEvent = {
@@ -42,7 +44,7 @@ const ACTIVE_PROJECT_STATUSES = ["dispatching", "building"];
 // by an outer access gate while the authenticated Runner job still succeeds.
 // A delivered D1 row remains authoritative after Runner restarts, so it is the
 // only normal state intentionally excluded from opportunistic reconciliation.
-const RUNNER_SYNC_STATUSES = [...ACTIVE_PROJECT_STATUSES, "queued", "ready", "paused", "failed"];
+const RUNNER_SYNC_STATUSES = [...ACTIVE_PROJECT_STATUSES, "queued", "ready", "awaiting_approval", "paused", "failed"];
 
 function validDeliveryUrl(value: unknown) {
   if (typeof value !== "string") return false;
@@ -86,7 +88,7 @@ async function syncRunnerState(userId: string, projects: ProjectRow[]) {
         }))
         : [];
       project.executionCheckpoints = Array.isArray(job.checkpoints)
-        ? job.checkpoints.filter((stage) => ["mobile-spec", "implementation", "build", "deployment"].includes(stage))
+        ? job.checkpoints.filter((stage) => ["mobile-spec", "preview", "implementation", "build", "deployment"].includes(stage))
         : [];
       if (job.status === "failed") {
         await getD1().prepare(`UPDATE projects SET status = 'failed', current_stage = 'failed',
@@ -103,7 +105,23 @@ async function syncRunnerState(userId: string, projects: ProjectRow[]) {
         project.previewUrl = null;
         return;
       }
-      if (job.status === "checkpointed" && job.stage && ["mobile-spec", "implementation", "build", "deployment"].includes(job.stage)) {
+      if (job.status === "awaiting_approval") {
+        if (project.previewApprovalStatus === "approved" && project.selectedPreviewId) return;
+        await getD1().prepare(`INSERT INTO project_preview_approvals (
+          project_id, owner_user_id, status, preview_set_id, selected_preview_id, approved_at
+        ) VALUES (?, ?, 'pending', NULL, NULL, NULL)
+        ON CONFLICT(project_id) DO UPDATE SET status = 'pending', preview_set_id = NULL,
+          selected_preview_id = NULL, approved_at = NULL, updated_at = CURRENT_TIMESTAMP`)
+          .bind(project.id, userId).run();
+        await getD1().prepare(`UPDATE projects SET status = 'awaiting_approval', current_stage = 'preview', preview_url = NULL,
+          updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?`).bind(project.id, userId).run();
+        project.status = "awaiting_approval";
+        project.currentStage = "preview";
+        project.previewApprovalStatus = "pending";
+        project.selectedPreviewId = null;
+        return;
+      }
+      if (job.status === "checkpointed" && job.stage && ["mobile-spec", "preview", "implementation", "build", "deployment"].includes(job.stage)) {
         await getD1().prepare(`UPDATE projects SET status = 'ready', current_stage = ?, preview_url = NULL,
           updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?`).bind(job.stage, project.id, userId).run();
         project.status = "ready";
@@ -127,7 +145,7 @@ async function syncRunnerState(userId: string, projects: ProjectRow[]) {
         project.previewUrl = job.url || null;
         return;
       }
-      if (job.stage && ["mobile-spec", "implementation", "build", "deployment"].includes(job.stage)) {
+      if (job.stage && ["mobile-spec", "preview", "implementation", "build", "deployment"].includes(job.stage)) {
         await getD1().prepare(`UPDATE projects SET status = 'building', current_stage = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ? AND owner_user_id = ?`).bind(job.stage, project.id, userId).run();
         project.status = "building";
@@ -142,9 +160,13 @@ async function syncRunnerState(userId: string, projects: ProjectRow[]) {
 export async function GET(request: Request) {
   const user = await requireSession(request);
   if (!user) return jsonError("未登录", 401);
-  const result = await getD1().prepare(`SELECT id, name, prompt, status,
-    current_stage AS currentStage, preview_url AS previewUrl, updated_at AS updatedAt
-    FROM projects WHERE owner_user_id = ? ORDER BY updated_at DESC LIMIT 20`)
+  const result = await getD1().prepare(`SELECT projects.id, projects.name, projects.prompt, projects.status,
+    projects.current_stage AS currentStage, projects.preview_url AS previewUrl, projects.updated_at AS updatedAt,
+    project_preview_approvals.status AS previewApprovalStatus,
+    project_preview_approvals.selected_preview_id AS selectedPreviewId
+    FROM projects LEFT JOIN project_preview_approvals
+      ON project_preview_approvals.project_id = projects.id
+    WHERE projects.owner_user_id = ? ORDER BY projects.updated_at DESC LIMIT 20`)
     .bind(user.id).all<ProjectRow>();
   await syncRunnerState(user.id, result.results);
   await getD1().prepare(`UPDATE projects SET status = 'failed', current_stage = 'failed', updated_at = CURRENT_TIMESTAMP
