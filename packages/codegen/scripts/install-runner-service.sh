@@ -43,6 +43,12 @@ awk -F= -v stable_tunnel="${stable_tunnel}" '
   { print }
   END { if (!replaced) print "CODEGEN_TUNNEL_BIN=" stable_tunnel }
 ' "${source_env}" > "${env_tmp}"
+for proxy_name in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY; do
+  proxy_value="${(P)proxy_name:-}"
+  if [[ -n "${proxy_value}" ]] && ! grep -q "^${proxy_name}=" "${source_env}"; then
+    print -r -- "${proxy_name}=${proxy_value}" >> "${env_tmp}"
+  fi
+done
 chmod 600 "${env_tmp}"
 mv "${env_tmp}" "${stable_env}"
 

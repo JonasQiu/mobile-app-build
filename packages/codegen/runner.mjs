@@ -1,9 +1,10 @@
 // Trusted Node runner for the production control plane. It executes one job
 // asynchronously and reports stage/evidence to the server-owned callback.
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { generate } from "./src/generate.js";
@@ -191,6 +192,93 @@ function send(res, status, body, headers = {}) {
   res.end(JSON.stringify(body));
 }
 
+function controlPlaneHeaders() {
+  const headers = {
+    authorization: `Bearer ${CALLBACK_TOKEN}`,
+    "content-type": "application/json",
+  };
+  if (process.env.SITES_BYPASS_TOKEN) {
+    headers["OAI-Sites-Authorization"] = `Bearer ${process.env.SITES_BYPASS_TOKEN}`;
+  }
+  return headers;
+}
+
+function curlJsonPost(url, headers, body, signal) {
+  const command = process.env.CODEGEN_HEALTHCHECK_BIN;
+  if (!command || !basename(command).startsWith("curl")) return null;
+  return new Promise((resolvePost, rejectPost) => {
+    const marker = "\n__SITEFORGE_HTTP_STATUS__:";
+    const args = [
+      "-sS",
+      "-L",
+      "--connect-timeout", "8",
+      "--max-time", "20",
+      "-o", "-",
+      "-w", `${marker}%{http_code}`,
+      "-X", "POST",
+    ];
+    for (const [key, value] of Object.entries(headers)) args.push("-H", `${key}: ${value}`);
+    args.push("--data-binary", "@-", "--url", String(url));
+    const child = spawn(command, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const stdout = [];
+    const stderr = [];
+    let settled = false;
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () => {
+      child.kill("SIGTERM");
+      finish(() => rejectPost(signal?.reason instanceof Error ? signal.reason : new DOMException("execution paused", "AbortError")));
+    };
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.on("error", (error) => finish(() => rejectPost(error)));
+    child.on("close", (code) => finish(() => {
+      const output = Buffer.concat(stdout).toString("utf8");
+      const markerIndex = output.lastIndexOf(marker);
+      const status = markerIndex >= 0 ? Number(output.slice(markerIndex + marker.length).trim()) : 0;
+      const responseText = markerIndex >= 0 ? output.slice(0, markerIndex) : output;
+      let responseBody = null;
+      try {
+        responseBody = responseText ? JSON.parse(responseText) : null;
+      } catch {
+        responseBody = null;
+      }
+      if (code !== 0 && !status) {
+        const detail = Buffer.concat(stderr).toString("utf8").trim().split("\n").at(-1) || `curl exited with code ${code}`;
+        rejectPost(new Error(detail));
+        return;
+      }
+      resolvePost({ ok: status >= 200 && status < 300, status, body: responseBody });
+    }));
+    child.stdin.end(JSON.stringify(body));
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function postControlPlaneJson(url, body, signal) {
+  const headers = controlPlaneHeaders();
+  const curlRequest = curlJsonPost(url, headers, body, signal);
+  if (curlRequest) return curlRequest;
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  });
+  const responseBody = response.headers.get("content-type")?.includes("application/json")
+    ? await response.json().catch(() => null)
+    : null;
+  return { ok: response.ok, status: response.status, body: responseBody };
+}
+
 const delay = (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 
 function controlPlaneOrigin() {
@@ -241,27 +329,16 @@ async function registerRunnerWithControlPlane(endpoint) {
   if (!CONTROL_PLANE_URL) throw new Error("CODEGEN_CONTROL_PLANE_URL is not configured");
   if (!CALLBACK_TOKEN) throw new Error("RUNNER_CALLBACK_TOKEN is not configured");
   const registerUrl = new URL("/api/v1/runner/register", CONTROL_PLANE_URL);
-  const headers = {
-    authorization: `Bearer ${CALLBACK_TOKEN}`,
-    "content-type": "application/json",
-  };
-  if (process.env.SITES_BYPASS_TOKEN) {
-    headers["OAI-Sites-Authorization"] = `Bearer ${process.env.SITES_BYPASS_TOKEN}`;
-  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20_000);
   try {
-    const response = await fetch(registerUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ endpoint, instanceId: RUNNER_INSTANCE_ID }),
-      signal: controller.signal,
-    });
-    const body = response.headers.get("content-type")?.includes("application/json")
-      ? await response.json().catch(() => null)
-      : null;
-    if (!response.ok || body?.online !== true) {
-      const detail = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    const response = await postControlPlaneJson(
+      registerUrl,
+      { endpoint, instanceId: RUNNER_INSTANCE_ID },
+      controller.signal,
+    );
+    if (!response.ok || response.body?.online !== true) {
+      const detail = typeof response.body?.error === "string" ? response.body.error : `HTTP ${response.status}`;
       throw new Error(`control-plane registration failed: ${detail}`);
     }
     registeredRunnerEndpoint = endpoint;
@@ -326,16 +403,7 @@ function readBody(req) {
 
 async function callback(callbackUrl, body, signal) {
   if (process.env.CODEGEN_DISABLE_CALLBACK === "1") return;
-  const headers = { authorization: `Bearer ${CALLBACK_TOKEN}`, "content-type": "application/json" };
-  if (process.env.SITES_BYPASS_TOKEN) {
-    headers["OAI-Sites-Authorization"] = `Bearer ${process.env.SITES_BYPASS_TOKEN}`;
-  }
-  const response = await fetch(callbackUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  });
+  const response = await postControlPlaneJson(callbackUrl, body, signal);
   if (!response.ok) throw new Error(`control-plane callback failed (HTTP ${response.status})`);
 }
 

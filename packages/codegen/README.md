@@ -80,6 +80,6 @@ npm test
 packages/codegen/scripts/install-runner-service.sh /tmp/mobile-build-runner.env
 ```
 
-安装器会把环境文件以 `0600` 权限保存到用户配置目录，把 `cloudflared` 复制到稳定位置，并创建 `com.siteforge.runner` 常驻服务。LaunchAgent 的 `PATH` 会显式包含当前 Node/npm 目录，构建器也会优先使用 `process.execPath` 同目录的 npm，避免服务环境出现 `spawn npm ENOENT`。密钥和二进制均不会提交到 Git。电脑重启后 Runner 会自动启动；如果 Quick Tunnel 地址变化，页面点击“修复连接”即可从本机 Runner 取得并登记新地址。
+安装器会把环境文件以 `0600` 权限保存到用户配置目录，把 `cloudflared` 复制到稳定位置，并创建 `com.siteforge.runner` 常驻服务。LaunchAgent 的 `PATH` 会显式包含当前 Node/npm 目录，构建器也会优先使用 `process.execPath` 同目录的 npm，避免服务环境出现 `spawn npm ENOENT`；安装时还会继承当前终端的 HTTP(S) 代理配置，避免守护进程直连公网时被边缘安全策略误拦截。密钥和二进制均不会提交到 Git。电脑重启后 Runner 会自动启动；如果 Quick Tunnel 地址变化，Runner 会自动换址并登记，页面“修复连接”作为人工兜底。
 
 Runner 会区分页面代码错误和执行环境错误。npm 无法启动时不会调用 Codex 修改页面；环境恢复后直接重试 `npm ci`，并复用已成功的 Mobile Spec 与实现检查点。

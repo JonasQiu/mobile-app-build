@@ -20,6 +20,7 @@ test("trusted runner is asynchronous, authenticated, and evidence gated", async 
 
 test("trusted runner fails closed when required secrets are missing", async () => {
   const runner = await readFile(runnerUrl, "utf8");
+  const installer = await readFile(new URL("../scripts/install-runner-service.sh", import.meta.url), "utf8");
   assert.match(runner, /if \(!RUNNER_TOKEN \|\| !supplied \|\| !timingSafeEqual/);
   assert.match(runner, /send\(res, 401, \{ error: "unauthorized runner request" \}\)/);
   assert.match(runner, /!CALLBACK_TOKEN \|\| \(!process\.env\.OPENAI_API_KEY && !process\.env\.CODEX_BIN\)/);
@@ -47,11 +48,16 @@ test("trusted runner fails closed when required secrets are missing", async () =
   assert.match(runner, /maintainRunnerEndpoint/);
   assert.match(runner, /RUNNER_PUBLIC_HEALTH_INTERVAL_MS/);
   assert.match(runner, /registerRunnerWithControlPlane/);
+  assert.match(runner, /postControlPlaneJson/);
+  assert.match(runner, /CODEGEN_HEALTHCHECK_BIN/);
+  assert.match(runner, /__SITEFORGE_HTTP_STATUS__/);
   assert.match(runner, /\/api\/v1\/runner\/register/);
   assert.match(runner, /runner endpoint maintenance failed/);
   assert.match(runner, /\/control-endpoint\/rotate/);
   assert.match(runner, /access-control-allow-private-network/);
   assert.match(runner, /instanceId: RUNNER_INSTANCE_ID/);
+  assert.match(installer, /HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY/);
+  assert.match(installer, /proxy_value="\$\{\(P\)proxy_name:-\}"/);
 });
 
 test("trusted runner can cooperatively pause and cleanly rerun a job", async () => {
