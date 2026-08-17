@@ -239,6 +239,7 @@ button {
 
 .login-button {
   margin-top: 5px;
+  text-decoration: none;
 }
 
 .auth-note {

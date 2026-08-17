@@ -10,7 +10,7 @@ Mobile Build 是一个移动端网站生成入口。用户提交一句完整需�
 
 ```mermaid
 flowchart TD
-  A[登录] --> B[输入完整需求]
+  A[使用 ChatGPT 登录] --> B[输入完整需求]
   B --> C[保存项目]
   C --> D[派发受信任 Runner]
   D --> E[Mobile Spec 门禁]
@@ -30,7 +30,7 @@ flowchart TD
 
 ## 3. 已实现范围
 
-- 应用内 MVP 登录与项目 D1 持久化。
+- ChatGPT 登录与项目 D1 持久化；ChatGPT 稳定用户 ID 只用于身份映射和数据隔离，Codex、Runner、构建和部署继续使用平台统一配置。
 - 纯文本完整需求；链接可以作为需求文本的一部分。
 - 完整需求直接进入生成流程，不依赖关键词模板或固定业务页面。
 - Mobile Spec：Proposal、Specs、Design、Review、Tasks 和 gate。
@@ -38,7 +38,7 @@ flowchart TD
 - 中立 Next.js 模板、完整文件 manifest、安全路径校验。
 - 可复现依赖安装、生产构建、失败日志修复。
 - Runner 实时 progress/message/events 与历史项目详情。
-- 每个用户最多同时执行 2 个需求；服务端原子占位并拒绝第三个任务。
+- 平台共享 Runner 全站最多同时执行 2 个需求；服务端原子占位并拒绝第三个任务。
 - Runner 协作式暂停、子进程终止、检查点继续与显式完整重跑；暂停任务立即释放执行名额。
 - 四个执行阶段支持单步运行与前置检查；规格文档、实现清单、构建日志和部署证据可独立查看。
 - Mobile Spec 保存 propose/design/task 子阶段进度；Codex 与构建保存最近错误，下一次只修复当前失败位置。
@@ -61,7 +61,7 @@ flowchart TD
 - 取消、Runner lease、跨 Runner 故障转移与执行中自动恢复。
 - 源码 ZIP、不可变远端 checkpoint 和继续修改。
 - 正式 Cloud Runner 与持久 DeploymentProvider。
-- 邀请制多用户、配额、计费、审计查询和数据删除。
+- 用户级预算、计费、审计查询和数据删除。
 - iOS、Android、Harmony 的真实生成与构建。
 
 ## 6. 状态与交付语义

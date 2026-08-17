@@ -148,8 +148,7 @@ export async function GET(request: Request) {
     .bind(user.id).all<ProjectRow>();
   await syncRunnerState(user.id, result.results);
   await getD1().prepare(`UPDATE projects SET status = 'failed', current_stage = 'failed', updated_at = CURRENT_TIMESTAMP
-    WHERE owner_user_id = ? AND status = 'dispatching' AND updated_at < datetime('now', '-2 minutes')`)
-    .bind(user.id).run();
+    WHERE status = 'dispatching' AND updated_at < datetime('now', '-2 minutes')`).run();
   for (const project of result.results) {
     const updatedAt = project.updatedAt.includes("T") ? project.updatedAt : `${project.updatedAt.replace(" ", "T")}Z`;
     if (project.status === "dispatching" && Date.parse(updatedAt) < Date.now() - 120_000) {
@@ -159,8 +158,7 @@ export async function GET(request: Request) {
     }
   }
   const capacity = await getD1().prepare(`SELECT COUNT(*) AS active FROM projects
-    WHERE owner_user_id = ? AND status IN ('dispatching', 'building')`)
-    .bind(user.id).first<{ active: number }>();
+    WHERE status IN ('dispatching', 'building')`).first<{ active: number }>();
   return Response.json({
     projects: result.results,
     executionCapacity: { active: Number(capacity?.active) || 0, max: MAX_ACTIVE_PROJECTS },
@@ -174,9 +172,10 @@ export async function POST(request: Request) {
   const name = typeof payload?.name === "string" ? payload.name.trim().slice(0, 100) : "";
   const prompt = typeof payload?.prompt === "string" ? payload.prompt.trim().slice(0, 4000) : "";
   if (!name || !prompt) return jsonError("项目名称和描述不能为空", 400);
+  await getD1().prepare(`UPDATE projects SET status = 'failed', current_stage = 'failed', updated_at = CURRENT_TIMESTAMP
+    WHERE status = 'dispatching' AND updated_at < datetime('now', '-2 minutes')`).run();
   const capacity = await getD1().prepare(`SELECT COUNT(*) AS active FROM projects
-    WHERE owner_user_id = ? AND status IN ('dispatching', 'building')`)
-    .bind(user.id).first<{ active: number }>();
+    WHERE status IN ('dispatching', 'building')`).first<{ active: number }>();
   if (Number(capacity?.active) >= MAX_ACTIVE_PROJECTS) {
     return Response.json({
       error: "最多只能同时执行 2 个需求，请等待其中一个完成后再提交",

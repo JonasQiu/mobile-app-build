@@ -14,7 +14,7 @@
 
 ```mermaid
 flowchart LR
-  B[Browser] -->|"Cookie Session"| W[Web Worker 控制面]
+  B[Browser] -->|"Sign in with ChatGPT 身份头"| W[Web Worker 控制面]
   W -->|"D1 binding (env.DB)"| D[(Cloudflare D1)]
   W -->|"Bearer CODEX_RUNNER_TOKEN"| R[Node Runner]
   R -->|"Bearer RUNNER_CALLBACK_TOKEN"| W
@@ -25,7 +25,7 @@ flowchart LR
 
 | 连接 | 方式 | 说明 |
 |---|---|---|
-| 浏览器 → 控制面 | HttpOnly Cookie | 15 秒轮询 `GET /api/projects` 获取进度 |
+| 浏览器 → 控制面 | Sites 托管的 Sign in with ChatGPT；调度层注入稳定用户 ID 与邮箱 | 15 秒轮询 `GET /api/projects` 获取当前用户的进度 |
 | 控制面 → D1 | Worker binding | `env.DB` 直连，不走网络 |
 | 控制面 → Runner | D1 最新登记地址（`CODEX_RUNNER_URL` 为回退）+ `CODEX_RUNNER_TOKEN` | 派发、暂停、拉取状态与读取阶段产物 |
 | Runner → 控制面 | `RUNNER_CALLBACK_TOKEN` | 交付结果回调；外层策略阻断时由控制面主动拉取终态 |
@@ -37,9 +37,10 @@ flowchart LR
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| `POST` | `/api/auth/login` | 登录并创建 HttpOnly Session |
-| `POST` | `/api/auth/logout` | 撤销当前 Session |
-| `GET` | `/api/auth/session` | 读取当前用户 |
+| `GET` | `/signin-with-chatgpt` | Sites 调度层发起 ChatGPT 登录；应用不实现该保留路径 |
+| `GET` | `/signout-with-chatgpt` | Sites 调度层退出并返回站内相对路径 |
+| `POST` | `/api/auth/login` | 旧本地登录已停用，返回 410 与 ChatGPT 登录入口 |
+| `GET` | `/api/auth/session` | 读取调度层提供的 ChatGPT 用户身份；未登录返回 401 |
 | `GET` | `/api/projects` | 查询项目，并为执行中项目同步 Runner 状态 |
 | `POST` | `/api/projects` | 保存完整需求，创建 `queued` 项目 |
 | `DELETE` | `/api/projects/{projectId}` | 删除当前用户的非进行中历史项目 |
@@ -207,7 +208,7 @@ Mobile Spec 使用独立子阶段 marker 保存 propose/design/task 的连续成
 
 | 存储位置 | 数据内容 | 角色 |
 |---|---|---|
-| Cloudflare D1 | users / sessions / projects 表 | 项目**终态**来源（source of truth） |
+| Cloudflare D1 | users / projects 表；sessions 仅兼容保留 | 项目**终态**来源（source of truth） |
 | Runner 内存 | job / progress / message / events / evidence | **执行中**状态来源，重启即丢失 |
 | Runner 工作区 | requirement-scoped checkpoints / Markdown / manifest / build log / deployment evidence | 成功阶段复用与产物查看 |
 
@@ -215,15 +216,15 @@ Schema 双份维护：Drizzle 定义在 `apps/web/db/schema.ts`（迁移文件�
 
 ### 表结构
 
-**users**：`id`（`usr_` 前缀）、`username` / `username_normalized`（小写归一化，唯一索引，登录键）、`password_hash` / `password_salt` / `password_iterations`（PBKDF2-SHA256，100k 迭代）、`status`（登录时校验 `active`）。
+**users**：`id`（`usr_` 前缀；由站点内稳定 ChatGPT 用户 ID 的 SHA-256 前缀派生）、`username`（ChatGPT 显示名或邮箱）、`username_normalized`（归一化邮箱，唯一索引）、`status`。密码字段只为兼容旧表结构保留，当前认证不读取。
 
-**sessions**：`id`（`ses_` + UUID）、`token_hash`（会话 token 的 SHA-256，**明文不入库**，唯一索引）、`user_id`、`expires_at`（7 天）、`last_seen_at`、`revoked_at`。
+**sessions**：旧本地会话兼容表，当前请求鉴权不再读取。
 
 **projects**：`id`（`prj_` + UUID）、`owner_user_id`（所有查询带此条件做行级隔离）、`name`（≤100 字符）、`prompt`（≤4000 字符）、`status`、`current_stage`、`preview_url`（仅 delivered 时写入）、`created_at` / `updated_at`（索引 `(owner_user_id, updated_at DESC)`）。
 
 ### 核心数据流
 
-1. **提交**：校验会话与输入长度 → 容量检查（每用户 < 2 个进行中）→ INSERT `queued` 记录，不触发执行。
+1. **提交**：校验 ChatGPT 身份与输入长度 → 容量检查（全站共享 Runner < 2 个进行中）→ INSERT `queued` 记录，不触发执行。
 2. **派发**：原子抢占名额（单条条件 UPDATE，靠 `meta.changes` 判断成败）置 `dispatching` → 带 `Idempotency-Key` POST 给 Runner → 返回 202 置 `building`；派发失败回滚原状态；响应未知则保持 `dispatching` 占位交给轮询收敛。
 3. **同步**：`GET /api/projects` 对执行中项目并发拉取 Runner，按返回状态更新 D1（见下表）；progress / message / events 只透传不落库（message 截断 600 字符、events 取末 12 条）；Runner 读失败静默忽略，**绝不发明终态**；`dispatching` 超 2 分钟未确认批量置 failed 释放名额。
 4. **回调**：Runner 带 token 回调 delivery 路由，timing-safe 比对通过且校验齐全才写终态，与轮询互为冗余的两条终态通道。
@@ -251,10 +252,10 @@ stateDiagram-v2
 
 | 数据 | 校验规则 |
 |---|---|
-| 登录口令 | PBKDF2 100k 迭代 + timing-safe 比对 |
-| 会话 token | 只存 SHA-256 哈希；查询时校验未吊销、未过期、用户 active |
+| 浏览器身份 | 只信任 Sites 调度层注入的稳定 ChatGPT 用户 ID 与邮箱；匿名 API 请求返回 401 |
+| 数据隔离 | 稳定身份派生 `owner_user_id`，所有项目查询、删除、暂停、执行和产物读取均校验所有权 |
 | 项目输入 | name ≤ 100 / prompt ≤ 4000，空值拒绝 |
-| 执行容量 | 每用户最多 2 个进行中项目，提交与派发两处检查 |
+| 执行容量 | 共享 Runner 全站最多 2 个进行中项目，提交与派发两处全局检查 |
 | Runner 消息 | message ≤ 600、events ≤ 12 条、stage ≤ 40、progress 夹在 0-100 |
 | 交付 URL | 必须 HTTPS、非 localhost、非控制站自身、非 `/preview` 路径 |
 | 回调身份 | `RUNNER_CALLBACK_TOKEN` timing-safe 比对 |

@@ -34,14 +34,15 @@ SiteForge AI 将这些环节封装成一条可观察、可暂停、可恢复并�
 
 ```mermaid
 flowchart LR
-  A[输入自然语言需求] --> B[保存原始需求]
-  B --> C[派发可信 Runner]
-  C --> D[Mobile Spec 规格与门禁]
-  D --> E[Codex 生成页面实现]
-  E --> F[依赖安装与生产构建]
-  F --> G[部署独立站点]
-  G --> H[公网健康检查]
-  H --> I[返回可访问 URL]
+  A[使用 ChatGPT 登录] --> B[输入自然语言需求]
+  B --> C[保存原始需求并隔离用户数据]
+  C --> D[派发可信 Runner]
+  D --> E[Mobile Spec 规格与门禁]
+  E --> F[Codex 生成页面实现]
+  F --> G[依赖安装与生产构建]
+  G --> H[部署独立站点]
+  H --> I[公网健康检查]
+  I --> J[返回可访问 URL]
 ```
 
 用户不需要选择行业模板，也不需要理解代码和部署环境。平台保存完整需求文本，并将真实执行状态持续同步到控制台。
@@ -65,16 +66,17 @@ flowchart LR
 ### 2.5 已实现的核心能力
 
 1. **一句话生成网站**：保存用户的完整需求，不进行关键词分类或固定模板匹配。
-2. **Mobile Spec 规格工作流**：生成 Proposal、Specs、Design、Review 和 Tasks，并通过确定性门禁。
-3. **AI 结构化实现**：支持 Codex CLI 或 OpenAI Structured Outputs，输出符合约束的 SiteManifest。
-4. **真实生产构建**：执行锁定依赖安装和 `next build`，构建失败时将真实日志反馈给 Codex 定向修复。
-5. **实时执行进度**：每 15 秒同步 Runner 的进度、当前消息和最近事件，而不是由前端计时器模拟。
-6. **暂停与恢复**：可以中断 Mobile Spec、模型调用、依赖安装、构建或健康检查，并从成功检查点继续。
-7. **单步骤执行**：规格、实现、构建和部署可以独立执行和查看产物。
-8. **历史项目管理**：支持历史详情、项目删除、Markdown 规格文档和构建日志预览。
-9. **并发控制**：单用户最多同时执行 2 个任务，由服务端原子占位。
-10. **证据式交付**：只有规格、构建和部署三项证据全部通过，系统才会保存交付 URL。
-11. **Runner 自恢复**：macOS LaunchAgent 负责登录自启和异常保活；临时入口失效时可在页面一键换址、校验并重新派发任务。
+2. **ChatGPT 多用户登录**：访问者使用自己的 ChatGPT 账号登录，需求、历史和产物按稳定用户 ID 隔离；模型、Runner、构建和部署统一使用平台配置。
+3. **Mobile Spec 规格工作流**：生成 Proposal、Specs、Design、Review 和 Tasks，并通过确定性门禁。
+4. **AI 结构化实现**：支持 Codex CLI 或 OpenAI Structured Outputs，输出符合约束的 SiteManifest。
+5. **真实生产构建**：执行锁定依赖安装和 `next build`，构建失败时将真实日志反馈给 Codex 定向修复。
+6. **实时执行进度**：每 15 秒同步 Runner 的进度、当前消息和最近事件，而不是由前端计时器模拟。
+7. **暂停与恢复**：可以中断 Mobile Spec、模型调用、依赖安装、构建或健康检查，并从成功检查点继续。
+8. **单步骤执行**：规格、实现、构建和部署可以独立执行和查看产物。
+9. **历史项目管理**：支持历史详情、项目删除、Markdown 规格文档和构建日志预览。
+10. **并发控制**：平台共享 Runner 最多同时执行 2 个任务，由服务端全局原子占位。
+11. **证据式交付**：只有规格、构建和部署三项证据全部通过，系统才会保存交付 URL。
+12. **Runner 自恢复**：macOS LaunchAgent 负责登录自启和异常保活；临时入口失效时自动换址、验证并登记，页面按钮作为人工兜底。
 
 ## 3. 技术方案
 
@@ -82,8 +84,8 @@ flowchart LR
 
 | 层级 | 技术 | 主要职责 |
 |---|---|---|
-| Web 控制面 | Next.js、React、TypeScript、vinext | 登录、需求输入、历史记录、进度与产物展示 |
-| 托管与数据 | OpenAI Sites、Cloudflare Workers、D1 | 控制站部署、会话与项目终态持久化 |
+| Web 控制面 | Next.js、React、TypeScript、vinext | ChatGPT 登录、需求输入、历史记录、进度与产物展示 |
+| 托管与数据 | OpenAI Sites、Cloudflare Workers、D1 | 控制站部署、ChatGPT 身份映射与项目终态持久化 |
 | 执行面 | Node.js Trusted Runner、macOS LaunchAgent | 调用模型、写文件、运行子进程、构建与部署，并保持验收 Runner 在线 |
 | AI Provider | Codex CLI / OpenAI API | 生成结构化页面实现与失败修复 |
 | 规格引擎 | 自研 Mobile Spec | Proposal、Specs、Design、Review、Tasks 与门禁 |
@@ -108,7 +110,7 @@ Web 控制站运行在 Cloudflare Worker 环境，适合处理 HTTP 请求和持
 
 ```mermaid
 flowchart LR
-  U[用户浏览器] --> W[Web 控制面<br/>OpenAI Sites / vinext]
+  U[用户浏览器] -->|Sign in with ChatGPT| W[Web 控制面<br/>OpenAI Sites / vinext]
   W --> D[(Cloudflare D1)]
   W -->|Bearer HTTPS| R[Trusted Node Runner<br/>LaunchAgent 保活]
   R --> M[Mobile Spec Engine]
@@ -264,7 +266,7 @@ queued → dispatching → building → ready | paused | failed | delivered
 - Runner 为每个 Job 创建独立 `AbortController`；
 - 中断信号传递到模型调用、Mobile Spec、npm、构建、隧道和健康检查子进程；
 - 暂停完成后释放并发名额；
-- 服务端通过原子更新限制单用户最多同时执行 2 个任务。
+- 服务端通过全局原子更新限制共享 Runner 最多同时执行 2 个任务。
 
 **结果：** 暂停是执行层真实停止，而不是界面上的状态切换。
 
@@ -290,13 +292,14 @@ queued → dispatching → building → ready | paused | failed | delivered
 
 - 控制站与 Runner 使用独立 Bearer Token；
 - Runner 产物接口不直接暴露给浏览器；
-- 登录会话使用 HttpOnly、Secure、SameSite Cookie；
-- 密码使用 PBKDF2-SHA256、独立 Salt 和迭代次数；
+- 登录由 Sites 托管的 Sign in with ChatGPT 完成，服务端只信任调度层身份头；
+- ChatGPT 稳定用户 ID 用于派生 D1 所有者主键，所有项目与产物操作均校验所有权；
+- 访问者的 ChatGPT 账号不提供执行能力，也不会向平台暴露对话、文件、Token 或账单信息；Codex、Runner、构建与部署统一使用平台凭证；
 - Codex CLI 使用 ephemeral、read-only sandbox；
 - 生成文件经过路径、扩展名和路由校验；
 - 浏览器无权写入最终状态和交付 URL；
 - Secret 只存在于受控环境变量，不进入日志、文档和 Git；
-- 当前已建立 46 项 Runner 测试、13 项 Web 契约测试，并执行 ESLint、生产构建和文档检查。
+- 当前已建立 46 项 Runner 测试、14 项 Web 契约测试，并执行 ESLint、生产构建和文档检查。
 
 ## 7. 当前边界
 
@@ -335,7 +338,7 @@ queued → dispatching → building → ready | paused | failed | delivered
 
 ### 8.4 产品商业化
 
-- 增加邀请制账户、团队空间和角色权限；
+- 增加团队空间、成员角色和资源授权策略；
 - 按模型 Token、构建时长和部署资源建立配额；
 - 增加任务成本、成功率、平均交付时间和失败原因分析；
 - 建立模板市场，但模板只作为可选加速能力，不替代用户原始需求；

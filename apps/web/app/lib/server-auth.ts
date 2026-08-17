@@ -1,11 +1,8 @@
 import { env } from "cloudflare:workers";
+import { chatGPTUserFromHeaders } from "../chatgpt-auth";
 
 const SESSION_COOKIE = "mobile_build_session";
 const SESSION_DAYS = 7;
-const SEED_USERNAME = "jonas";
-const SEED_SALT = "mobile-app-build-mvp-v1";
-const SEED_ITERATIONS = 100_000;
-const SEED_PASSWORD_HASH = "647c9712ff4a1ce1833de94c45e0b7d421529d5b28364244949521fbe3ab4b4a";
 
 export type SessionUser = { id: string; username: string };
 
@@ -59,18 +56,6 @@ export async function ensureDatabase() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
   ]);
-  await db.prepare(`INSERT INTO users (
-    id, username, username_normalized, password_hash, password_salt, password_iterations, status
-  ) VALUES (?, ?, ?, ?, ?, ?, 'active')
-  ON CONFLICT(id) DO UPDATE SET
-    username = excluded.username,
-    username_normalized = excluded.username_normalized,
-    password_hash = excluded.password_hash,
-    password_salt = excluded.password_salt,
-    password_iterations = excluded.password_iterations,
-    status = 'active'`)
-    .bind("usr_joans", SEED_USERNAME, SEED_USERNAME, SEED_PASSWORD_HASH, SEED_SALT, SEED_ITERATIONS)
-    .run();
 }
 
 export async function verifyPassword(password: string, salt: string, iterations: number, expectedHash: string) {
@@ -116,19 +101,29 @@ export function readSessionToken(request: Request) {
 }
 
 export async function requireSession(request: Request): Promise<SessionUser | null> {
+  const chatGPTUser = chatGPTUserFromHeaders(request.headers);
+  if (!chatGPTUser) return null;
   await ensureDatabase();
-  const token = readSessionToken(request);
-  if (!token) return null;
-  const tokenHash = await hashToken(token);
-  const row = await getD1().prepare(`SELECT users.id, users.username
-    FROM sessions JOIN users ON users.id = sessions.user_id
-    WHERE sessions.token_hash = ? AND sessions.revoked_at IS NULL
-      AND sessions.expires_at > CURRENT_TIMESTAMP AND users.status = 'active'
-    LIMIT 1`).bind(tokenHash).first<{ id: string; username: string }>();
-  if (!row) return null;
-  await getD1().prepare("UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token_hash = ?")
-    .bind(tokenHash).run();
-  return { id: row.id, username: row.username };
+
+  const normalizedEmail = chatGPTUser.email.trim().toLowerCase();
+  const ownerEmail = String(process.env.SITE_OWNER_EMAIL || "").trim().toLowerCase();
+  const identityHash = await hashToken(chatGPTUser.userId);
+  const userId = ownerEmail && normalizedEmail === ownerEmail
+    ? "usr_joans"
+    : `usr_chatgpt_${identityHash.slice(0, 24)}`;
+  const username = chatGPTUser.displayName.trim().slice(0, 80) || normalizedEmail;
+
+  await getD1().prepare(`INSERT INTO users (
+    id, username, username_normalized, password_hash, password_salt, password_iterations, status
+  ) VALUES (?, ?, ?, '', '', 1, 'active')
+  ON CONFLICT(id) DO UPDATE SET
+    username = excluded.username,
+    username_normalized = excluded.username_normalized,
+    status = 'active'`)
+    .bind(userId, username, normalizedEmail)
+    .run();
+
+  return { id: userId, username };
 }
 
 export function jsonError(error: string, status: number) {

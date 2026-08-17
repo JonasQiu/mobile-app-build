@@ -1,4 +1,4 @@
-import { getD1, jsonError } from "../../../../../lib/server-auth";
+import { getD1, jsonError, requireSession } from "../../../../../lib/server-auth";
 
 function timingSafeEqual(left: string, right: string) {
   if (left.length !== right.length) return false;
@@ -53,15 +53,15 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
 export async function GET(request: Request, context: RouteContext<"/api/v1/projects/[projectId]/delivery">) {
   const expected = process.env.RUNNER_CALLBACK_TOKEN || "";
   const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || "";
-  // Sites injects this header only after its outer access policy authenticates
-  // the viewer. This site is owner-only, so the owner can inspect their own
-  // stored requirement without exposing the runner secret to the browser.
-  const authenticatedSiteOwner = Boolean(request.headers.get("oai-authenticated-user-email"));
   const trustedRunner = Boolean(expected && supplied && timingSafeEqual(expected, supplied));
-  if (!authenticatedSiteOwner && !trustedRunner) return jsonError("未授权的执行器", 401);
+  const user = trustedRunner ? null : await requireSession(request);
+  if (!trustedRunner && !user) return jsonError("未登录", 401);
   const { projectId } = await context.params;
-  const project = await getD1().prepare(`SELECT id, name, prompt, status, current_stage AS currentStage
-    FROM projects WHERE id = ? LIMIT 1`).bind(projectId).first();
+  const project = trustedRunner
+    ? await getD1().prepare(`SELECT id, name, prompt, status, current_stage AS currentStage
+      FROM projects WHERE id = ? LIMIT 1`).bind(projectId).first()
+    : await getD1().prepare(`SELECT id, name, prompt, status, current_stage AS currentStage
+      FROM projects WHERE id = ? AND owner_user_id = ? LIMIT 1`).bind(projectId, user!.id).first();
   if (!project) return jsonError("项目不存在", 404);
   return Response.json({ project }, { headers: { "cache-control": "no-store" } });
 }

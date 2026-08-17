@@ -81,9 +81,9 @@ export async function POST(request: Request, context: RouteContext<"/api/v1/proj
     const claim = await getD1().prepare(`UPDATE projects
       SET status = 'dispatching', current_stage = ?, preview_url = NULL, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND owner_user_id = ? AND status = ?
-        AND (SELECT COUNT(*) FROM projects WHERE owner_user_id = ?
-          AND status IN ('dispatching', 'building')) < ?`)
-      .bind(targetStage || "mobile-spec", project.id, user.id, project.status, user.id, MAX_ACTIVE_PROJECTS).run();
+        AND (SELECT COUNT(*) FROM projects
+          WHERE status IN ('dispatching', 'building')) < ?`)
+      .bind(targetStage || "mobile-spec", project.id, user.id, project.status, MAX_ACTIVE_PROJECTS).run();
     if (!claim.meta.changes) {
       return Response.json({
         error: "最多只能同时执行 2 个需求，请等待其中一个完成后再试",

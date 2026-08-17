@@ -190,8 +190,6 @@ function isExternalDeliveryUrl(value: string | null): value is string {
 export function MobileBuildApp() {
   const [authState, setAuthState] = useState<"checking" | "signed-out" | "signed-in">("checking");
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [loginError, setLoginError] = useState("");
-  const [loggingIn, setLoggingIn] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [submittedPrompt, setSubmittedPrompt] = useState("");
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
@@ -267,35 +265,8 @@ export function MobileBuildApp() {
     };
   }, [authState, hasActiveProjects]);
 
-  async function handleLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoginError("");
-    setLoggingIn(true);
-    const form = new FormData(event.currentTarget);
-    try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: form.get("username"), password: form.get("password") }),
-      });
-      const data = await readJsonResponse<{ user?: AuthUser; error?: string }>(response, "登录失败");
-      if (!response.ok) throw new Error(data.error || "登录失败");
-      if (!data.user) throw new Error("登录成功，但服务未返回用户信息");
-      setUser(data.user);
-      setAuthState("signed-in");
-    } catch (error) {
-      setLoginError(error instanceof Error ? error.message : "登录失败");
-    } finally {
-      setLoggingIn(false);
-    }
-  }
-
-  async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
-    setUser(null);
-    setAuthState("signed-out");
-    setSheet(null);
-    resetRequest();
+  function handleLogout() {
+    window.location.assign("/signout-with-chatgpt?return_to=/");
   }
 
   async function handlePrompt(event: FormEvent) {
@@ -552,13 +523,11 @@ export function MobileBuildApp() {
             <div><p className="eyebrow">MOBILE BUILD</p><h1>一句话，<br />启动真实构建流程。</h1></div>
             <p className="auth-copy">需求经 Codex API 进入 Mobile Spec，再由受信任 Runner 实现、验证和发布。</p>
           </div>
-          <form className="login-form" onSubmit={handleLogin}>
-            <label><span>账号</span><input name="username" defaultValue="jonas" autoComplete="username" required /></label>
-            <label><span>密码</span><input name="password" type="password" autoComplete="current-password" placeholder="输入密码" required /></label>
-            {loginError ? <p className="form-error" role="alert">{loginError}</p> : null}
-            <button className="primary-button login-button" type="submit" disabled={loggingIn}>{loggingIn ? "正在登录…" : "登录"}<Icon name="chevron" /></button>
-          </form>
-          <p className="auth-note"><span className="status-dot" />没有真实部署，不返回 URL</p>
+          <div className="login-form">
+            <p className="auth-copy">使用你的 ChatGPT 账号登录。账号只用于身份识别和数据隔离，构建能力由 SiteForge 统一提供。</p>
+            <a className="primary-button login-button" href="/signin-with-chatgpt?return_to=%2F">使用 ChatGPT 登录<Icon name="chevron" /></a>
+          </div>
+          <p className="auth-note"><span className="status-dot" />每位用户只能查看自己的需求与产物</p>
         </section>
       </main>
     );
@@ -641,7 +610,7 @@ export function MobileBuildApp() {
         <aside className="bottom-sheet menu-sheet">
           <div className="sheet-handle" />
           <div className="sheet-title"><div><p className="eyebrow">WORKSPACE</p><h3>需求与账户</h3></div><button onClick={() => setSheet(null)}><Icon name="x" /></button></div>
-          <div className="account-row"><div className="account-avatar">J</div><div><strong>{user?.username}</strong><span>MVP 本地账户</span></div><button aria-label="退出登录" onClick={handleLogout}><Icon name="logout" /></button></div>
+          <div className="account-row"><div className="account-avatar">{user?.username.slice(0, 1).toUpperCase() || "U"}</div><div><strong>{user?.username}</strong><span>ChatGPT 账户</span></div><button aria-label="退出登录" onClick={handleLogout}><Icon name="logout" /></button></div>
           <div className="recent-projects">
             <div className="list-heading"><span>已保存需求</span><small>{executionCapacity.active}/{executionCapacity.max} 执行中 · 共 {projects.length}</small></div>
             {deleteError ? <p className="history-error" role="alert">{deleteError}</p> : null}

@@ -7,6 +7,27 @@ const root = new URL("../", import.meta.url);
 // From apps/web/ it is two levels up to the repo root, then into packages/codegen.
 const codegen = new URL("../../packages/codegen/", root);
 
+test("visitors sign in with ChatGPT while projects stay isolated by stable identity", async () => {
+  const page = await readFile(new URL("app/page.tsx", root), "utf8");
+  const auth = await readFile(new URL("app/chatgpt-auth.ts", root), "utf8");
+  const serverAuth = await readFile(new URL("app/lib/server-auth.ts", root), "utf8");
+  const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
+  const legacyLogin = await readFile(new URL("app/api/auth/login/route.ts", root), "utf8");
+
+  assert.match(page, /dynamic = "force-dynamic"/);
+  assert.match(page, /requireChatGPTUser\("\/"\)/);
+  assert.match(auth, /oai-authenticated-user-id/);
+  assert.match(auth, /oai-authenticated-user-email/);
+  assert.match(serverAuth, /chatGPTUserFromHeaders\(request\.headers\)/);
+  assert.match(serverAuth, /SITE_OWNER_EMAIL/);
+  assert.match(serverAuth, /usr_chatgpt_/);
+  assert.match(app, /\/signin-with-chatgpt\?return_to=%2F/);
+  assert.match(app, /ChatGPT 账户/);
+  assert.doesNotMatch(app, /defaultValue="jonas"/);
+  assert.doesNotMatch(app, /name="password"/);
+  assert.match(legacyLogin, /本地账号登录已停用/);
+});
+
 test("mobile input preserves the requirement instead of selecting a keyword template", async () => {
   const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
   assert.match(app, /TEXT \+ LINKS/);
@@ -68,7 +89,8 @@ test("only a trusted evidence callback may mark a project delivered", async () =
   assert.match(projectsRoute, /客户端不能直接标记交付/);
   assert.match(deliveryRoute, /RUNNER_CALLBACK_TOKEN/);
   assert.match(deliveryRoute, /export async function GET/);
-  assert.match(deliveryRoute, /oai-authenticated-user-email/);
+  assert.match(deliveryRoute, /requireSession/);
+  assert.match(deliveryRoute, /owner_user_id = \?/);
   assert.match(deliveryRoute, /mobileSpecPassed/);
   assert.match(deliveryRoute, /buildPassed/);
   assert.match(deliveryRoute, /deployPassed/);
@@ -110,13 +132,14 @@ test("history deletion is ownership-scoped and rejects active projects", async (
   assert.match(deleteRoute, /进行中的需求不能删除/);
 });
 
-test("server atomically enforces a maximum of two active executions", async () => {
+test("server atomically enforces a platform-wide maximum of two active executions", async () => {
   const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
   const projectsRoute = await readFile(new URL("app/api/projects/route.ts", root), "utf8");
   const jobsRoute = await readFile(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root), "utf8");
   assert.match(projectsRoute, /MAX_ACTIVE_PROJECTS = 2/);
   assert.match(projectsRoute, /EXECUTION_LIMIT_REACHED/);
   assert.match(jobsRoute, /COUNT\(\*\).*status IN \('dispatching', 'building'\)/s);
+  assert.doesNotMatch(jobsRoute, /COUNT\(\*\) FROM projects WHERE owner_user_id/);
   assert.match(jobsRoute, /< \?/);
   assert.match(jobsRoute, /SET status = 'dispatching'/);
   assert.match(app, /executionCapacity\.active >= executionCapacity\.max/);
