@@ -48,12 +48,16 @@ test("expired runner endpoints can self-register, rotate, and be repaired from t
   const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
   const endpoint = await readFile(new URL("app/lib/runner-endpoint.ts", root), "utf8");
   const recover = await readFile(new URL("app/api/v1/runner/recover/route.ts", root), "utf8");
+  const register = await readFile(new URL("app/api/v1/runner/register/route.ts", root), "utf8");
   assert.match(app, /修复连接/);
   assert.match(app, /127\.0\.0\.1:5174\/control-endpoint\/rotate/);
   assert.match(app, /\/api\/v1\/runner\/recover/);
   assert.match(endpoint, /runner_endpoints/);
   assert.match(endpoint, /registerRunnerEndpoint/);
   assert.match(recover, /health\.instanceId !== instanceId/);
+  assert.match(register, /RUNNER_CALLBACK_TOKEN/);
+  assert.match(register, /health\.instanceId !== instanceId/);
+  assert.match(register, /registerRunnerEndpoint/);
 });
 
 test("only a trusted evidence callback may mark a project delivered", async () => {

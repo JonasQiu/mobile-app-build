@@ -51,6 +51,7 @@ flowchart LR
 | `GET` | `/api/v1/projects/{projectId}/delivery` | 受信任 Runner 或 Sites owner 读取项目需求 |
 | `GET` | `/api/v1/runner/recover` | 已登录用户查询 Runner 连接状态 |
 | `POST` | `/api/v1/runner/recover` | 校验本机 Runner 返回的新地址与实例编号后更新 D1 |
+| `POST` | `/api/v1/runner/register` | 使用 callback token 鉴权，公网复核 Runner 实例与健康状态后自动更新 D1 |
 
 ### `GET /api/projects` 项目结构
 

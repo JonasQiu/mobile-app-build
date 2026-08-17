@@ -35,7 +35,7 @@ Manifest 规范化会确定性合并重复的导航 href；若合并后不足 4 
 
 Runner 会分别校验 Mobile Spec、实现、构建、部署检查点；继续执行时跳过所有已成功阶段。Mobile Spec 另用 `mobile-spec-progress.json` 保存 propose/design/task 成功前缀、尝试次数和最近 gate 错误，失败后只重做当前子阶段。升级前工作区若包含需求一致的完整规格、manifest 和生产构建，会自动补写 marker，不触发重复构建。规格步骤保存五份 Markdown 文档，实现保存 manifest，构建保存真实日志，部署保存 URL 与健康检查证据。单步执行实现、构建或部署时，前置检查点缺失会明确失败。
 
-启用 `CODEGEN_AUTO_PUBLIC_TUNNEL=1` 后，Runner 会为自身控制 API 建立公网入口，控制隧道退出会自动重建。本机恢复接口 `POST /control-endpoint/rotate` 只接受 `CODEGEN_CONTROL_PLANE_URL` 对应的浏览器 Origin，并支持 Private Network Access 预检；它轮换隧道并返回新 `/jobs` 地址与 Runner 实例编号，由控制面完成公网身份和健康检查后登记。该机制只解决 Runner 临时入口漂移，不会把 Quick Tunnel 变成具有 SLA 的生产服务。
+启用 `CODEGEN_AUTO_PUBLIC_TUNNEL=1` 后，Runner 会为自身控制 API 建立公网入口，并周期性从公网检查 `/health`。即使隧道子进程仍存活，只要域名返回 1016、5xx 或持续不可达，Runner 也会回收旧隧道并创建新地址。新地址通过公网检查后，Runner 使用 callback token 和 Sites bypass token 调用控制站的受信任登记接口；控制站再次校验实例编号与部署能力后写入 D1。页面“修复连接”与本机 `POST /control-endpoint/rotate` 保留为人工兜底。该机制只解决 Runner 临时入口漂移，不会把 Quick Tunnel 变成具有 SLA 的生产服务。
 
 ## 环境变量
 
@@ -43,6 +43,7 @@ Runner 会分别校验 Mobile Spec、实现、构建、部署检查点；继续�
 |---|---|---|
 | `CODEX_RUNNER_TOKEN` | 无 | `/jobs` Bearer token |
 | `RUNNER_CALLBACK_TOKEN` | 无 | 可选回调 token；即使禁用回调，当前 Runner 健康门禁仍要求配置 |
+| `SITES_BYPASS_TOKEN` | 无 | Runner 调用 owner-only 控制站自动登记接口时使用的 Sites 外层访问 token |
 | `CODEX_BIN` | 无 | Codex CLI 绝对路径；没有 API Key 时使用 |
 | `CODEX_WORKDIR` | 当前目录 | Codex 只读结构化调用工作目录 |
 | `OPENAI_API_KEY` | 无 | 可选 OpenAI API Provider |
@@ -51,6 +52,8 @@ Runner 会分别校验 Mobile Spec、实现、构建、部署检查点；继续�
 | `CODEGEN_RUNNER_PORT` | `5174` | Runner 监听端口 |
 | `CODEGEN_CONTROL_PLANE_URL` | 无 | 本机恢复接口允许的控制站 Origin |
 | `CODEGEN_AUTO_PUBLIC_TUNNEL` | 未设置 | `1` 时自动维护 Runner 自身的公网控制隧道 |
+| `CODEGEN_RUNNER_PUBLIC_HEALTH_INTERVAL_MS` | `30000` | Runner 公网控制入口的健康检查间隔，最小 10 秒 |
+| `CODEGEN_RUNNER_REGISTRATION_REFRESH_MS` | `300000` | 同一 Runner 地址向 D1 刷新登记的间隔 |
 | `CODEGEN_TIMEOUT_MS` | `600000` | 一次完整生成超时 |
 | `CODEGEN_DEPLOYMENT_HEALTH_TIMEOUT_MS` | `120000` | 公网部署健康检查总等待时间；由多个临时部署地址共享 |
 | `CODEGEN_DEPLOYMENT_TUNNEL_ATTEMPTS` | `3` | 总时限内最多创建的临时部署地址数，范围 1–5 |

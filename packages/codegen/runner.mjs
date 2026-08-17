@@ -63,8 +63,18 @@ const previews = new Map();
 const RUNNER_INSTANCE_ID = `runner_${crypto.randomUUID()}`;
 const CONTROL_PLANE_URL = String(process.env.CODEGEN_CONTROL_PLANE_URL || "").trim();
 const AUTO_PUBLIC_TUNNEL = process.env.CODEGEN_AUTO_PUBLIC_TUNNEL === "1";
+const RUNNER_PUBLIC_HEALTH_INTERVAL_MS = Math.max(
+  10_000,
+  Number(process.env.CODEGEN_RUNNER_PUBLIC_HEALTH_INTERVAL_MS) || 30_000,
+);
+const RUNNER_REGISTRATION_REFRESH_MS = Math.max(
+  RUNNER_PUBLIC_HEALTH_INTERVAL_MS,
+  Number(process.env.CODEGEN_RUNNER_REGISTRATION_REFRESH_MS) || 300_000,
+);
 let runnerEndpointTunnel = null;
 let runnerEndpointChange = null;
+let registeredRunnerEndpoint = "";
+let registeredRunnerAt = 0;
 let runnerListeningPort = PORT;
 let shuttingDown = false;
 
@@ -227,17 +237,70 @@ async function ensureRunnerEndpoint(port, { rotate = false } = {}) {
   return runnerEndpointChange;
 }
 
+async function registerRunnerWithControlPlane(endpoint) {
+  if (!CONTROL_PLANE_URL) throw new Error("CODEGEN_CONTROL_PLANE_URL is not configured");
+  if (!CALLBACK_TOKEN) throw new Error("RUNNER_CALLBACK_TOKEN is not configured");
+  const registerUrl = new URL("/api/v1/runner/register", CONTROL_PLANE_URL);
+  const headers = {
+    authorization: `Bearer ${CALLBACK_TOKEN}`,
+    "content-type": "application/json",
+  };
+  if (process.env.SITES_BYPASS_TOKEN) {
+    headers["OAI-Sites-Authorization"] = `Bearer ${process.env.SITES_BYPASS_TOKEN}`;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch(registerUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ endpoint, instanceId: RUNNER_INSTANCE_ID }),
+      signal: controller.signal,
+    });
+    const body = response.headers.get("content-type")?.includes("application/json")
+      ? await response.json().catch(() => null)
+      : null;
+    if (!response.ok || body?.online !== true) {
+      const detail = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+      throw new Error(`control-plane registration failed: ${detail}`);
+    }
+    registeredRunnerEndpoint = endpoint;
+    registeredRunnerAt = Date.now();
+    console.log(`runner endpoint registered at control plane: ${endpoint}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function maintainRunnerEndpoint(port) {
   while (!shuttingDown) {
+    let checkedTunnel = null;
     try {
-      await ensureRunnerEndpoint(port);
-      await delay(5_000);
+      const endpoint = await ensureRunnerEndpoint(port);
+      checkedTunnel = runnerEndpointTunnel;
+      const healthUrl = new URL("/health", endpoint).toString();
+      await waitForPublicUrl(healthUrl, {
+        timeoutMs: 20_000,
+        retryDelayMs: 2_000,
+        isAlive: () => Boolean(checkedTunnel?.isAlive() && runnerEndpointTunnel === checkedTunnel),
+      });
+      if (runnerEndpointTunnel !== checkedTunnel) continue;
+      if (registeredRunnerEndpoint !== endpoint || Date.now() - registeredRunnerAt >= RUNNER_REGISTRATION_REFRESH_MS) {
+        await registerRunnerWithControlPlane(endpoint).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`runner endpoint registration failed: ${message}`);
+        });
+      }
+      await delay(RUNNER_PUBLIC_HEALTH_INTERVAL_MS);
     } catch (error) {
       if (shuttingDown) break;
       const message = error instanceof Error ? error.message : String(error);
       console.error(`runner endpoint maintenance failed: ${message}`);
-      runnerEndpointTunnel?.stop();
-      runnerEndpointTunnel = null;
+      if (runnerEndpointTunnel === checkedTunnel) {
+        checkedTunnel?.stop();
+        runnerEndpointTunnel = null;
+        registeredRunnerEndpoint = "";
+      }
       await delay(3_000);
     }
   }
