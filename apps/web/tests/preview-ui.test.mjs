@@ -61,6 +61,29 @@ test("review SVG rejects obfuscated CSS resource fetches", () => {
   for (const input of unsafe) assert.equal(sanitizeReviewSvg(input), null);
 });
 
+test("review SVG rejects prefixed active elements and alternate resource namespaces", () => {
+  const unsafe = [
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:s="http://www.w3.org/2000/svg"><s:style>rect{fill:url(https://example.invalid/pixel.png)}</s:style></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:s2="http://www.w3.org/2000/svg"><s2:script>alert(1)</s2:script></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:safe-1="http://www.w3.org/2000/svg"><safe-1:foreignObject /></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xl="http://www.w3.org/1999/xlink"><image xl:href="https://example.invalid/pixel.png" /></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" xml:base="https://example.invalid/"><use href="#safe-shape" /></svg>`,
+  ];
+  for (const input of unsafe) assert.equal(sanitizeReviewSvg(input), null);
+});
+
+test("review SVG distinguishes safe ampersands from double-encoded resources", () => {
+  const safe = `<svg xmlns="http://www.w3.org/2000/svg" aria-label="R&amp;D" aria-description="#a&amp;b"><use href="&#35;safe-shape" /></svg>`;
+  assert.equal(sanitizeReviewSvg(safe), safe);
+
+  const unsafe = [
+    `<svg xmlns="http://www.w3.org/2000/svg"><image href="&amp;#x68;ttps://example.invalid/pixel.png" /></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg"><rect fill="u&amp;#x72;l(https://example.invalid/pixel.png)" /></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg"><use href="&amp;#35;safe-shape" /></svg>`,
+  ];
+  for (const input of unsafe) assert.equal(sanitizeReviewSvg(input), null);
+});
+
 test("direction navigation stays within the current three-item batch", () => {
   assert.equal(previewIndexAfterMove(0, -1, 3), 0);
   assert.equal(previewIndexAfterMove(0, 1, 3), 1);
