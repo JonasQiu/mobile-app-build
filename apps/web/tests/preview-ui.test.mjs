@@ -84,6 +84,27 @@ test("review SVG distinguishes safe ampersands from double-encoded resources", (
   for (const input of unsafe) assert.equal(sanitizeReviewSvg(input), null);
 });
 
+test("review SVG rejects SMIL activity and resource mutations", () => {
+  const unsafe = [
+    ["set href to", `<svg xmlns="http://www.w3.org/2000/svg"><image href="#safe"><set attributeName="href" to="https://example.invalid/set.png" /></image></svg>`],
+    ["set xml:base to", `<svg xmlns="http://www.w3.org/2000/svg"><g><set attributeName="xml:base" to="https://example.invalid/" /></g></svg>`],
+    ["animate href from/to", `<svg xmlns="http://www.w3.org/2000/svg"><image href="#safe"><animate attributeName="href" from="#safe" to="https://example.invalid/to.png" /></image></svg>`],
+    ["animate href by", `<svg xmlns="http://www.w3.org/2000/svg"><image href="#safe"><animate attributeName="href" by="https://example.invalid/by.png" /></image></svg>`],
+    ["animate href values", `<svg xmlns="http://www.w3.org/2000/svg"><image href="#safe"><animate attributeName="href" values="#safe;https://example.invalid/values.png" /></image></svg>`],
+    ["animate xml:base from/to", `<svg xmlns="http://www.w3.org/2000/svg"><g><animate attributeName="xml:base" from="" to="https://example.invalid/" /></g></svg>`],
+    ["animate xml:base by", `<svg xmlns="http://www.w3.org/2000/svg"><g><animate attributeName="xml:base" by="https://example.invalid/" /></g></svg>`],
+    ["animate xml:base values", `<svg xmlns="http://www.w3.org/2000/svg"><g><animate attributeName="xml:base" values=";https://example.invalid/" /></g></svg>`],
+    ["animateMotion", `<svg xmlns="http://www.w3.org/2000/svg"><rect><animateMotion path="M0,0 L20,30" /></rect></svg>`],
+    ["animateTransform", `<svg xmlns="http://www.w3.org/2000/svg"><rect><animateTransform attributeName="transform" type="translate" to="40 50" /></rect></svg>`],
+    ["animateColor", `<svg xmlns="http://www.w3.org/2000/svg"><rect><animateColor attributeName="fill" to="#fff" /></rect></svg>`],
+    ["discard", `<svg xmlns="http://www.w3.org/2000/svg"><rect><discard begin="1s" /></rect></svg>`],
+  ];
+  assert.deepEqual(
+    unsafe.map(([name, input]) => [name, sanitizeReviewSvg(input) === null]),
+    unsafe.map(([name]) => [name, true]),
+  );
+});
+
 test("direction navigation stays within the current three-item batch", () => {
   assert.equal(previewIndexAfterMove(0, -1, 3), 0);
   assert.equal(previewIndexAfterMove(0, 1, 3), 1);

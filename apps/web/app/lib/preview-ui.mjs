@@ -7,7 +7,10 @@ export const PREVIEW_CANVASES = Object.freeze([
 const SVG_ROOT = /^(?:<\?xml[^>]*>\s*)?<svg(?:\s|>)[\s\S]*<\/svg>\s*$/i;
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const ELEMENT = /<\s*\/?\s*([^\s/>]+)/g;
-const FORBIDDEN_ELEMENTS = new Set(["script", "style", "foreignobject", "iframe", "object", "embed", "audio", "video", "canvas", "a"]);
+const FORBIDDEN_ELEMENTS = new Set([
+  "script", "style", "foreignobject", "iframe", "object", "embed", "audio", "video", "canvas", "a",
+  "set", "animate", "animatemotion", "animatetransform", "animatecolor", "discard",
+]);
 const EVENT_HANDLER = /\son[a-z0-9:_-]+\s*=/i;
 const ACTIVE_CONTENT = /(?:javascript\s*:|data\s*:\s*text\/html|<\s*!DOCTYPE|<\s*!ENTITY|<\?xml-stylesheet|@import)/i;
 const ATTRIBUTE = /\s([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
