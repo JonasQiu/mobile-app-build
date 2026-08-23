@@ -1,0 +1,174 @@
+{
+  "baseline": "4b8edd81771beac19bca87aacdb71b377d0ba501",
+  "generatedAt": "2026-08-23T15:37:42.768Z",
+  "executionBoundaries": {
+    "interactiveBrowserBackends": 0,
+    "realLoginData": "unavailable",
+    "touchDevice": "unavailable",
+    "screenReader": "unavailable",
+    "implementationScreenshotsUsedAsAcceptanceEvidence": false
+  },
+  "pass": 11,
+  "fail": 1,
+  "results": [
+    {
+      "id": "canvases-exact",
+      "status": "pass",
+      "actual": [
+        {
+          "id": "desktop",
+          "label": "桌面",
+          "width": 1440,
+          "height": 900
+        },
+        {
+          "id": "tablet",
+          "label": "平板",
+          "width": 768,
+          "height": 1024
+        },
+        {
+          "id": "mobile",
+          "label": "手机",
+          "width": 390,
+          "height": 844
+        }
+      ],
+      "expected": "desktop 1440x900, tablet 768x1024, mobile 390x844"
+    },
+    {
+      "id": "non-cyclic-boundaries",
+      "status": "pass",
+      "actual": [
+        0,
+        2
+      ],
+      "expected": [
+        0,
+        2
+      ]
+    },
+    {
+      "id": "rapid-navigation-pure-index",
+      "status": "pass",
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "id": "current-batch-three-svg",
+      "status": "pass",
+      "actual": [
+        {
+          "id": "set_mt5z10l6_9e3ea5a5_p1",
+          "setId": "set_mt5z10l6_9e3ea5a5",
+          "format": "svg"
+        },
+        {
+          "id": "set_mt5z10l6_9e3ea5a5_p2",
+          "setId": "set_mt5z10l6_9e3ea5a5",
+          "format": "svg"
+        },
+        {
+          "id": "set_mt5z10l6_9e3ea5a5_p3",
+          "setId": "set_mt5z10l6_9e3ea5a5",
+          "format": "svg"
+        }
+      ],
+      "expected": "3 SVG"
+    },
+    {
+      "id": "stable-unique-direction-ids",
+      "status": "pass",
+      "actual": [
+        "set_mt5z10l6_9e3ea5a5_p1",
+        "set_mt5z10l6_9e3ea5a5_p2",
+        "set_mt5z10l6_9e3ea5a5_p3"
+      ],
+      "expected": "3 unique IDs scoped to one set"
+    },
+    {
+      "id": "historical-svg-reuse",
+      "status": "pass",
+      "actual": [
+        "b9d55ec04c3d9b1a501937d10a029ece03d90c02e88cd92c943674f79dc9ad9b",
+        "e0808e7d8587bb78cdbbbf7574449b73ac8cdaae7bf3827d93e6ee510d3eba46",
+        "2b23b141a45ad093836dadf44f2535ffcf875608c75d9499a9072b5017a01dfd"
+      ],
+      "expected": [
+        "b9d55ec04c3d9b1a501937d10a029ece03d90c02e88cd92c943674f79dc9ad9b",
+        "e0808e7d8587bb78cdbbbf7574449b73ac8cdaae7bf3827d93e6ee510d3eba46",
+        "2b23b141a45ad093836dadf44f2535ffcf875608c75d9499a9072b5017a01dfd"
+      ]
+    },
+    {
+      "id": "generated-svg-pass-safety-and-a11y",
+      "status": "pass",
+      "actual": [
+        {
+          "id": "set_mt5z10l6_9e3ea5a5_p1",
+          "safe": true,
+          "title": true,
+          "desc": true
+        },
+        {
+          "id": "set_mt5z10l6_9e3ea5a5_p2",
+          "safe": true,
+          "title": true,
+          "desc": true
+        },
+        {
+          "id": "set_mt5z10l6_9e3ea5a5_p3",
+          "safe": true,
+          "title": true,
+          "desc": true
+        }
+      ],
+      "expected": "all safe with title and desc"
+    },
+    {
+      "id": "new-batch-clears-old-approval",
+      "status": "pass",
+      "actual": {
+        "oldSet": "set_mt5z10l6_9e3ea5a5",
+        "newSet": "set_mt5z10ma_66e5754d",
+        "oldApprovalAccepted": false
+      },
+      "expected": "new set and old approval rejected"
+    },
+    {
+      "id": "direct-active-svg-fails-closed",
+      "status": "pass",
+      "actual": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "expected": "all rejected"
+    },
+    {
+      "id": "css-escaped-external-resource-fails-closed",
+      "status": "fail",
+      "actual": "accepted",
+      "expected": "rejected"
+    },
+    {
+      "id": "preview-actions-no-approval-call",
+      "status": "pass",
+      "actual": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "expected": "all true"
+    },
+    {
+      "id": "only-original-confirm-fetches-approval",
+      "status": "pass",
+      "actual": 1,
+      "expected": 1
+    }
+  ]
+}

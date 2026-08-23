@@ -1,0 +1,36 @@
+mobile-app-build preview capability independent acceptance command summary
+baseline_remote_main=4b8edd81771beac19bca87aacdb71b377d0ba501
+baseline_local_head=4b8edd81771beac19bca87aacdb71b377d0ba501
+unrelated_preexisting_change=.vscode/settings.json (preserved and excluded from acceptance commit)
+
+web_lint=pass
+web_node_tests=20/20 pass
+web_production_build=pass
+trusted_runner_tests=48/48 pass; 0 failed; 0 cancelled; duration 187765ms
+mobile_spec_tests=4/4 pass
+documentation_check=27 pass
+git_diff_check=pass before acceptance artifacts
+independent_harness=11 pass; 1 fail
+independent_harness_failure=CSS-escaped external url() accepted by sanitizeReviewSvg
+
+contrast_static_calculation:
+header_description=9.12:1
+device_text=14.27:1
+device_small=7.97:1
+navigation_text=15.10:1
+navigation_label=13.48:1
+canvas_caption=9.38:1
+disclaimer=13.44:1
+failure_text=10.59:1
+card_small=5.47:1
+card_action=12.34:1
+select_action=14.59:1
+focus_outline=15.10:1
+selected_state=11.97:1
+
+execution_boundary:
+interactive_browser_backends=0
+real_login_data=unavailable
+touch_device=unavailable
+screen_reader=unavailable
+implementation_screenshots_used_as_acceptance_evidence=false
