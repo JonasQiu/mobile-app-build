@@ -48,6 +48,7 @@ const facts = [
   ["失败步骤原地续修", yes(runner + generate + specWorkflow, /直接复用检查点，不重新执行[\s\S]*readRepairState[\s\S]*mobile-spec-progress\.json/), "Mobile Spec 复用成功子阶段；Codex/构建沿用最近错误定向修复；仅重跑清空"],
   ["产物预览", yes(app + artifacts + checkpoints, /MarkdownPreview[\s\S]*readStageArtifacts/), "步骤文件可独立读取，Markdown 与 SVG 可视化预览"],
   ["生成前多图确认", yes(app + jobs + previewApproval + runner + generate + preview, /preview-option-grid[\s\S]*PREVIEW_APPROVAL_REQUIRED[\s\S]*selected_preview_id[\s\S]*awaiting_approval[\s\S]*readApprovedPreview[\s\S]*format: "svg"/), "Mobile Spec 后生成 3 份 SVG；D1 持久确认；双重校验后才进入 Codex"],
+  ["沉浸式方向评审", yes(app, /role="dialog"[\s\S]*PREVIEW_CANVASES\.map[\s\S]*sanitizeReviewSvg/), "复用当前批次 3 份 SVG；三种模拟画布、键盘/焦点导航、安全失败关闭与唯一选择状态"],
   ["可信状态同步", yes(projects, /executionEvents/), "控制站服务端轮询 Runner，不接受浏览器终态"],
   ["受信任派发", yes(jobs, /CODEX_RUNNER_TOKEN/), "服务端 Bearer token 派发"],
   ["Runner 自动换址", yes(app + runnerRecover + runnerEndpoint + runner, /修复连接[\s\S]*registerRunnerEndpoint[\s\S]*maintainRunnerEndpoint[\s\S]*control-endpoint\/rotate/), "Runner 自动维护控制隧道；点击修复连接后从本机取得新地址，经服务端身份与健康检查后重派原任务"],

@@ -217,6 +217,31 @@ test("multiple previews require persisted approval before Codex execution", asyn
   assert.match(deliveryRoute, /body\?\.status === "approval_required"/);
 });
 
+test("immersive review reuses current SVGs without changing the trusted approval gate", async () => {
+  const app = await readFile(new URL("app/MobileBuildApp.tsx", root), "utf8");
+  const css = await readFile(new URL("app/globals.css", root), "utf8");
+  const openPreview = app.match(/function openImmersivePreview[\s\S]*?\n[ ]{2}}\n\n[ ]{2}function selectPreview/)?.[0] || "";
+  const selectPreview = app.match(/function selectPreview[\s\S]*?\n[ ]{2}}\n\n[ ]{2}function updatePreviewImageStatus/)?.[0] || "";
+
+  assert.match(app, /role="dialog"/);
+  assert.match(app, /aria-modal="true"/);
+  assert.match(app, /PREVIEW_CANVASES\.map/);
+  assert.match(app, /ArrowLeft/);
+  assert.match(app, /ArrowRight/);
+  assert.match(app, /event\.key === "Escape"/);
+  assert.match(app, /setAttribute\("inert"/);
+  assert.match(app, /previewTriggerRef/);
+  assert.match(app, /评审图不是最终页面/);
+  assert.match(app, /已选择，尚未最终确认/);
+  assert.match(app, /sanitizeReviewSvg/);
+  assert.doesNotMatch(app, /options\[0\]\.id/);
+  assert.doesNotMatch(openPreview, /approvePreview|preview-approval|runProject/);
+  assert.doesNotMatch(selectPreview, /approvePreview|preview-approval|runProject/);
+  assert.match(css, /\.preview-option-actions button[^}]*min-height: 44px/);
+  assert.match(css, /\.immersive-preview-navigation button[^}]*min-height: 44px/);
+  assert.match(css, /@media \(max-width: 350px\)/);
+});
+
 test("failed single steps retain their error context and repair in place", async () => {
   const jobsRoute = await readFile(new URL("app/api/v1/projects/[projectId]/jobs/route.ts", root), "utf8");
   const runner = await readFile(new URL("runner.mjs", codegen), "utf8");

@@ -1,6 +1,8 @@
 "use client";
 
-import { FormEvent, ReactNode, useCallback, useEffect, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
+
+import { PREVIEW_CANVASES, previewIndexAfterMove, sanitizeReviewSvg } from "./lib/preview-ui.mjs";
 
 type AuthUser = { id: string; username: string };
 
@@ -26,8 +28,12 @@ type ExecutionStage = "mobile-spec" | "preview" | "implementation" | "build" | "
 type ExecutionAction = { mode: ExecutionMode; targetStage?: ExecutionStage; regeneratePreview?: boolean };
 type ArtifactFile = { name: string; label: string; description?: string; id?: string; setId?: string; format: "markdown" | "json" | "text" | "svg"; content: string };
 type ArtifactResponse = { stage: ExecutionStage; checkpointed: boolean; artifacts: ArtifactFile[] };
+type PreviewDevice = "desktop" | "tablet" | "mobile";
+type PreviewImageStatus = "loading" | "ready" | "failed";
 
 const POLL_INTERVAL_MS = 15_000;
+const PREVIEW_FOCUSABLE = "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+const PREVIEW_DISCLAIMER = "评审图不是最终页面；设备画布仅为尺寸模拟，不代表真实设备或最终实现。";
 const LOCAL_RUNNER_RECOVERY_URL = "http://127.0.0.1:5174/control-endpoint/rotate";
 const RECOVERABLE_RUNNER_CODES = new Set([
   "EXECUTOR_OFFLINE",
@@ -180,8 +186,8 @@ async function readJsonResponse<T>(response: Response, fallbackMessage: string):
   }
 }
 
-function Icon({ name }: { name: "menu" | "spark" | "send" | "chevron" | "x" | "plus" | "logout" | "external" | "trash" | "pause" | "refresh" }) {
-  const glyphs = { menu: "☰", spark: "✦", send: "↑", chevron: "›", x: "×", plus: "+", logout: "↪", external: "↗", trash: "⌫", pause: "Ⅱ", refresh: "↻" };
+function Icon({ name }: { name: "menu" | "spark" | "send" | "chevron" | "x" | "plus" | "logout" | "external" | "trash" | "pause" | "refresh" | "expand" }) {
+  const glyphs = { menu: "☰", spark: "✦", send: "↑", chevron: "›", x: "×", plus: "+", logout: "↪", external: "↗", trash: "⌫", pause: "Ⅱ", refresh: "↻", expand: "⛶" };
   return <span aria-hidden="true" className={`icon icon-${name}`}>{glyphs[name]}</span>;
 }
 
@@ -199,10 +205,12 @@ function svgDataUrl(content: string) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(content)}`;
 }
 
-function PreviewImage({ artifact }: { artifact: ArtifactFile }) {
+function PreviewImage({ artifact, onError, onLoad }: { artifact: ArtifactFile; onError?: () => void; onLoad?: () => void }) {
   // Runtime-generated SVG review artifacts are already sized and cannot use a static Next image loader.
+  const safeSvg = sanitizeReviewSvg(artifact.content);
+  if (!safeSvg) return <div className="preview-image-failure" role="img" aria-label={`${artifact.label}预览不可用`}>安全检查未通过</div>;
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={svgDataUrl(artifact.content)} alt={`${artifact.label}网站预览图`} />;
+  return <img src={svgDataUrl(safeSvg)} alt={`${artifact.label}网站预览图`} onError={onError} onLoad={onLoad} />;
 }
 
 export function MobileBuildApp() {
@@ -236,9 +244,18 @@ export function MobileBuildApp() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const [approvingPreview, setApprovingPreview] = useState(false);
+  const [immersivePreviewId, setImmersivePreviewId] = useState("");
+  const [previewDevice, setPreviewDevice] = useState<PreviewDevice>("desktop");
+  const [previewImageStatus, setPreviewImageStatus] = useState<Record<string, PreviewImageStatus>>({});
+  const [immersiveAnnouncement, setImmersiveAnnouncement] = useState("");
+  const applicationContentRef = useRef<HTMLDivElement | null>(null);
+  const previewDialogRef = useRef<HTMLDivElement | null>(null);
+  const previewCloseButtonRef = useRef<HTMLButtonElement | null>(null);
+  const previewTriggerRef = useRef<HTMLButtonElement | null>(null);
   const activeProject = projects.find((item) => item.id === activeProjectId) ?? null;
   const generating = ["dispatching", "building"].includes(activeProject?.status || "");
   const hasActiveProjects = projects.some((item) => ["dispatching", "building"].includes(item.status));
+  const immersivePreviewOpen = Boolean(immersivePreviewId);
 
   const loadPreviewOptions = useCallback(async (projectId: string, preferredId = "") => {
     setPreviewLoading(true);
@@ -250,9 +267,15 @@ export function MobileBuildApp() {
       const data = await readJsonResponse<ArtifactResponse & { error?: string }>(response, "读取预览方案失败");
       if (!response.ok || !data.checkpointed || !data.artifacts?.length) throw new Error(data.error || "预览方案尚未生成");
       const options = data.artifacts.filter((artifact) => artifact.format === "svg" && artifact.id);
-      if (options.length < 2) throw new Error("预览方案不完整，请点击“换一组”重新生成");
+      if (options.length !== 3) throw new Error("当前批次必须恰好包含 3 个预览方向，请点击“换一组”重新生成");
       setPreviewOptions(options);
-      setSelectedPreviewId(options.some((item) => item.id === preferredId) ? preferredId : options[0].id || "");
+      const preferred = options.find((item) => item.id === preferredId);
+      setSelectedPreviewId(preferred && sanitizeReviewSvg(preferred.content) ? preferredId : "");
+      setPreviewImageStatus(Object.fromEntries(options.map((option) => [
+        option.id || option.name,
+        sanitizeReviewSvg(option.content) ? "loading" : "failed",
+      ])));
+      setImmersivePreviewId("");
       setPreviewProjectId(projectId);
     } catch (error) {
       setPreviewError(error instanceof Error ? error.message : "读取预览方案失败");
@@ -319,6 +342,100 @@ export function MobileBuildApp() {
     return () => window.clearTimeout(timer);
   }, [activeProjectId, activeProject?.currentStage, activeProject?.selectedPreviewId, activeProject?.status, activeProject?.executionCheckpoints, previewProjectId, loadPreviewOptions]);
 
+  const closeImmersivePreview = useCallback(() => {
+    const trigger = previewTriggerRef.current;
+    setImmersivePreviewId("");
+    setImmersiveAnnouncement("");
+    window.requestAnimationFrame(() => {
+      if (trigger?.isConnected) trigger.focus();
+    });
+  }, []);
+
+  const moveImmersivePreview = useCallback((direction: number) => {
+    const currentIndex = previewOptions.findIndex((option) => option.id === immersivePreviewId);
+    const nextIndex = previewIndexAfterMove(currentIndex, direction, previewOptions.length);
+    if (nextIndex < 0 || nextIndex === currentIndex) {
+      setImmersiveAnnouncement(direction < 0 ? "已经是第一个方向" : "已经是最后一个方向");
+      return;
+    }
+    const next = previewOptions[nextIndex];
+    setImmersivePreviewId(next.id || "");
+    setImmersiveAnnouncement(`已切换到方向 ${nextIndex + 1}，${next.label}`);
+  }, [immersivePreviewId, previewOptions]);
+
+  useEffect(() => {
+    if (!immersivePreviewOpen) return;
+    const content = applicationContentRef.current;
+    const previousOverflow = document.body.style.overflow;
+    content?.setAttribute("inert", "");
+    document.body.style.overflow = "hidden";
+    window.requestAnimationFrame(() => previewCloseButtonRef.current?.focus());
+    return () => {
+      content?.removeAttribute("inert");
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [immersivePreviewOpen]);
+
+  useEffect(() => {
+    if (!immersivePreviewId) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const isTextEntry = target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName || "");
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeImmersivePreview();
+        return;
+      }
+      if (!isTextEntry && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        event.preventDefault();
+        moveImmersivePreview(event.key === "ArrowLeft" ? -1 : 1);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(previewDialogRef.current?.querySelectorAll<HTMLElement>(PREVIEW_FOCUSABLE) || []);
+      if (!focusable.length) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [closeImmersivePreview, immersivePreviewId, moveImmersivePreview]);
+
+  function openImmersivePreview(option: ArtifactFile, trigger: HTMLButtonElement) {
+    const optionId = option.id || "";
+    if (!optionId) return;
+    previewTriggerRef.current = trigger;
+    setPreviewDevice("desktop");
+    setImmersivePreviewId(optionId);
+    setImmersiveAnnouncement(`已打开方向 ${previewOptions.findIndex((item) => item.id === optionId) + 1}，${option.label}，桌面画布`);
+  }
+
+  function selectPreview(option: ArtifactFile) {
+    const optionId = option.id || "";
+    if (!optionId || previewImageStatus[optionId] === "failed" || !sanitizeReviewSvg(option.content)) return;
+    setSelectedPreviewId(optionId);
+    setImmersiveAnnouncement(`已选择${option.label}，尚未最终确认生成`);
+  }
+
+  function updatePreviewImageStatus(optionId: string, status: PreviewImageStatus) {
+    setPreviewImageStatus((current) => current[optionId] === status ? current : { ...current, [optionId]: status });
+    if (status === "failed") {
+      setSelectedPreviewId((current) => current === optionId ? "" : current);
+      setImmersiveAnnouncement("当前方向载入失败，选择已清除，仍可切换其他方向");
+    }
+    if (status === "ready" && optionId === immersivePreviewId) setImmersiveAnnouncement("当前方向已载入");
+  }
+
   function handleLogout() {
     window.location.assign("/signout-with-chatgpt?return_to=/");
   }
@@ -345,6 +462,8 @@ export function MobileBuildApp() {
       setPreviewOptions([]);
       setPreviewProjectId("");
       setSelectedPreviewId("");
+      setImmersivePreviewId("");
+      setPreviewImageStatus({});
       setPreviewError("");
       setGenError("");
       setGenProgress("");
@@ -368,6 +487,8 @@ export function MobileBuildApp() {
     setPreviewOptions([]);
     setPreviewProjectId("");
     setSelectedPreviewId("");
+    setImmersivePreviewId("");
+    setPreviewImageStatus({});
     setPreviewError("");
   }
 
@@ -376,6 +497,8 @@ export function MobileBuildApp() {
       setPreviewOptions([]);
       setPreviewProjectId("");
       setSelectedPreviewId(item.selectedPreviewId || "");
+      setImmersivePreviewId("");
+      setPreviewImageStatus({});
       setPreviewError("");
     }
     setActiveProjectId(item.id);
@@ -417,6 +540,8 @@ export function MobileBuildApp() {
       setPreviewOptions([]);
       setPreviewProjectId("");
       setSelectedPreviewId("");
+      setImmersivePreviewId("");
+      setPreviewImageStatus({});
       setPreviewError("");
     }
     setProjects((items) => items.map((item) => item.id === projectId ? {
@@ -505,6 +630,11 @@ export function MobileBuildApp() {
 
   async function approvePreview() {
     if (!activeProjectId || !selectedPreviewId || approvingPreview) return;
+    const selected = previewOptions.find((option) => option.id === selectedPreviewId);
+    if (!selected || !sanitizeReviewSvg(selected.content) || previewImageStatus[selectedPreviewId] !== "ready") {
+      setPreviewError("所选方向尚未成功载入，请选择其他方向或稍后重试");
+      return;
+    }
     setApprovingPreview(true);
     setPreviewError("");
     setGenError("");
@@ -634,6 +764,17 @@ export function MobileBuildApp() {
   const capacityFull = executionCapacity.active >= executionCapacity.max;
   const runnerRecoverable = RECOVERABLE_RUNNER_CODES.has(runnerIssueCode);
   const activeArtifact = artifactData?.artifacts.find((artifact) => artifact.name === activeArtifactName) || artifactData?.artifacts[0] || null;
+  const immersivePreviewIndex = previewOptions.findIndex((option) => option.id === immersivePreviewId);
+  const immersivePreview = immersivePreviewIndex >= 0 ? previewOptions[immersivePreviewIndex] : null;
+  const activePreviewCanvas = PREVIEW_CANVASES.find((canvas) => canvas.id === previewDevice) || PREVIEW_CANVASES[0];
+  const immersivePreviewSafe = immersivePreview ? Boolean(sanitizeReviewSvg(immersivePreview.content)) : false;
+  const immersivePreviewStatus = immersivePreview
+    ? previewImageStatus[immersivePreview.id || immersivePreview.name] || (immersivePreviewSafe ? "loading" : "failed")
+    : "failed";
+  const selectedPreview = previewOptions.find((option) => option.id === selectedPreviewId) || null;
+  const selectedPreviewReady = Boolean(selectedPreview
+    && sanitizeReviewSvg(selectedPreview.content)
+    && previewImageStatus[selectedPreviewId] === "ready");
 
   if (authState === "checking") {
     return <main className="auth-shell loading-shell"><div className="brand-mark"><Icon name="spark" /></div><div className="loading-line"><span /></div></main>;
@@ -660,6 +801,7 @@ export function MobileBuildApp() {
 
   return (
     <main className="app-shell">
+      <div ref={applicationContentRef} className="app-content">
       <header className="topbar">
         <button className="icon-button" aria-label="打开项目菜单" onClick={() => setSheet("menu")}><Icon name="menu" /></button>
         <div className="topbar-title"><strong>Mobile Build</strong><span><i className="status-dot" />真实构建 · 证据式交付</span></div>
@@ -706,15 +848,28 @@ export function MobileBuildApp() {
                   {previewLoading ? <div className="preview-loading"><i className="status-dot" />正在读取多张预览图…</div> : null}
                   {previewError ? <p className="preview-error" role="alert">{previewError}</p> : null}
                   {previewOptions.length ? <div className="preview-option-grid">
-                    {previewOptions.map((option, index) => <button
-                      type="button"
-                      className={option.id === selectedPreviewId ? "selected" : ""}
-                      aria-pressed={option.id === selectedPreviewId}
-                      key={option.id || option.name}
-                      onClick={() => setSelectedPreviewId(option.id || "")}
-                    ><PreviewImage artifact={option} /><span><i>{option.id === selectedPreviewId ? "✓" : index + 1}</i><b>{option.label}</b></span><small>{option.description}</small></button>)}
+                    {previewOptions.map((option, index) => {
+                      const optionId = option.id || option.name;
+                      const safe = Boolean(sanitizeReviewSvg(option.content));
+                      const imageStatus = previewImageStatus[optionId] || (safe ? "loading" : "failed");
+                      const unavailable = !safe || imageStatus === "failed";
+                      const selected = option.id === selectedPreviewId;
+                      return <article className={`preview-option ${selected ? "selected" : ""} ${unavailable ? "failed" : ""}`} key={optionId}>
+                        <div className="preview-option-image">
+                          <PreviewImage artifact={option} onLoad={() => updatePreviewImageStatus(optionId, "ready")} onError={() => updatePreviewImageStatus(optionId, "failed")} />
+                          {imageStatus === "loading" ? <span><i className="status-dot" />正在载入方向 {index + 1}…</span> : null}
+                        </div>
+                        <div className="preview-option-copy"><span><i>{selected ? "✓" : index + 1}</i><b>{option.label}</b></span><small>{option.description}</small></div>
+                        {unavailable ? <p role="status">该方向无法安全载入，不能选择</p> : null}
+                        <div className="preview-option-actions">
+                          <button type="button" onClick={(event) => openImmersivePreview(option, event.currentTarget)}>沉浸预览<Icon name="expand" /></button>
+                          <button type="button" aria-pressed={selected} disabled={unavailable || imageStatus === "loading"} onClick={() => selectPreview(option)}>{selected ? "已选择" : "选择此方案"}</button>
+                        </div>
+                      </article>;
+                    })}
                   </div> : null}
-                  <div className="preview-actions"><button type="button" className="secondary-button" disabled={previewLoading || approvingPreview} onClick={regeneratePreviews}>换一组<Icon name="refresh" /></button><button type="button" className="primary-button" disabled={!selectedPreviewId || previewLoading || approvingPreview} onClick={() => void approvePreview()}>{approvingPreview ? "确认中…" : "确认生成"}<Icon name="spark" /></button></div>
+                  <div className="preview-actions"><button type="button" className="secondary-button" disabled={previewLoading || approvingPreview} onClick={regeneratePreviews}>换一组<Icon name="refresh" /></button><button type="button" className="primary-button" disabled={!selectedPreviewReady || previewLoading || approvingPreview} onClick={() => void approvePreview()}>{approvingPreview ? "确认中…" : "确认生成"}<Icon name="spark" /></button></div>
+                  {!immersivePreviewOpen ? <p className="sr-only" aria-live="polite">{immersiveAnnouncement}</p> : null}
                 </section>
               ) : null}
               <section className="live-console" aria-live="polite">
@@ -790,6 +945,69 @@ export function MobileBuildApp() {
             </>
           ) : null}
         </aside>
+      ) : null}
+      </div>
+
+      {immersivePreview ? (
+        <div className="immersive-preview-layer">
+          <div
+            ref={previewDialogRef}
+            className="immersive-preview-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="immersive-preview-title"
+            aria-describedby="immersive-preview-description immersive-preview-disclaimer"
+          >
+            <header className="immersive-preview-header">
+              <div><p className="eyebrow">IMMERSIVE PREVIEW</p><h2 id="immersive-preview-title">{immersivePreview.label}</h2><p id="immersive-preview-description">{immersivePreview.description || "查看当前方向的构图与信息层级"}</p></div>
+              <div className="immersive-preview-identity"><span>{immersivePreviewIndex + 1}/{previewOptions.length}</span><button ref={previewCloseButtonRef} type="button" aria-label="关闭沉浸预览" onClick={closeImmersivePreview}><Icon name="x" /></button></div>
+            </header>
+
+            <p id="immersive-preview-disclaimer" className="immersive-preview-disclaimer">{PREVIEW_DISCLAIMER}</p>
+
+            <div className="preview-device-controls" role="group" aria-label="模拟设备画布">
+              {PREVIEW_CANVASES.map((canvas) => <button
+                type="button"
+                key={canvas.id}
+                aria-pressed={previewDevice === canvas.id}
+                onClick={() => {
+                  setPreviewDevice(canvas.id);
+                  setImmersiveAnnouncement(`已切换到${canvas.label}模拟画布，${canvas.width} × ${canvas.height}`);
+                }}
+              ><span>{canvas.label}</span><small>{canvas.width} × {canvas.height}</small></button>)}
+            </div>
+
+            <div className="immersive-preview-stage" aria-busy={immersivePreviewStatus === "loading"}>
+              <div className={`preview-device-canvas preview-device-${activePreviewCanvas.id}`} style={{ aspectRatio: `${activePreviewCanvas.width} / ${activePreviewCanvas.height}` }}>
+                {immersivePreviewSafe ? <PreviewImage
+                  key={immersivePreview.id || immersivePreview.name}
+                  artifact={immersivePreview}
+                  onLoad={() => updatePreviewImageStatus(immersivePreview.id || immersivePreview.name, "ready")}
+                  onError={() => updatePreviewImageStatus(immersivePreview.id || immersivePreview.name, "failed")}
+                /> : null}
+                {immersivePreviewStatus === "loading" ? <div className="immersive-preview-state"><i className="status-dot" />正在载入 {immersivePreview.label}…</div> : null}
+                {immersivePreviewStatus === "failed" ? <div className="immersive-preview-state failed" role="alert"><strong>该方向无法安全载入</strong><span>可以继续查看上一张或下一张；当前方向不能选择。</span></div> : null}
+              </div>
+              <p className="preview-canvas-caption">{activePreviewCanvas.label}模拟画布 · {activePreviewCanvas.width} × {activePreviewCanvas.height} · SVG 等比完整容纳</p>
+            </div>
+
+            <div className="immersive-preview-footer">
+              <div className="immersive-preview-navigation" aria-label="切换预览方向">
+                <button type="button" disabled={immersivePreviewIndex <= 0} onClick={() => moveImmersivePreview(-1)}>← 上一张</button>
+                <span>{immersivePreview.label} · {immersivePreviewIndex + 1}/{previewOptions.length}</span>
+                <button type="button" disabled={immersivePreviewIndex >= previewOptions.length - 1} onClick={() => moveImmersivePreview(1)}>下一张 →</button>
+              </div>
+              <button
+                type="button"
+                className={`immersive-preview-select ${selectedPreviewId === immersivePreview.id ? "selected" : ""}`}
+                aria-pressed={selectedPreviewId === immersivePreview.id}
+                disabled={!immersivePreviewSafe || immersivePreviewStatus !== "ready"}
+                onClick={() => selectPreview(immersivePreview)}
+              >{selectedPreviewId === immersivePreview.id ? "✓ 已选择，尚未最终确认" : "选择此方案"}</button>
+            </div>
+            <p className="sr-only" aria-live="polite" aria-atomic="true">{immersiveAnnouncement}</p>
+          </div>
+        </div>
       ) : null}
     </main>
   );
