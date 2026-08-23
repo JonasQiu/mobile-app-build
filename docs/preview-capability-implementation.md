@@ -14,7 +14,7 @@ Web 控制面已补齐“看清楚后再选择”的前端闭环：
 3. 上一张/下一张与 `←`/`→` 仅在当前批次范围内导航，不循环；文本输入上下文不劫持方向键。方向切换保留画布，重新打开默认桌面。
 4. 桌面 `1440×900`、平板 `768×1024`、手机 `390×844` 三种模拟画布复用同一份已获取 SVG，使用 `object-fit: contain` 等比完整呈现；声明持续说明评审图不是最终页面。
 5. 卡片和沉浸预览复用唯一 `selectedPreviewId`；预览内选择不会调用确认 API，原“确认生成”仍是唯一可信确认入口。
-6. SVG 以不可信资产处理。纯函数安全检查拒绝脚本、事件属性、外链导航/资源、活动元素、`foreignObject`、DOCTYPE/ENTITY 和外部 CSS 资源；失败方向显示可读错误并禁止选择，但仍可继续导航。
+6. SVG 以不可信资产处理。纯函数安全检查拒绝脚本、事件属性、外链导航/资源、活动元素、`foreignObject`、DOCTYPE/ENTITY、`style` 元素/属性、CSS 转义与注释混淆；所有属性值先解码 XML 字符引用，再仅允许同文档 `#id` 或安全的 base64 栅格 `data:image` 资源。失败方向显示可读错误并禁止选择，但仍可继续导航。
 7. 换一组、完整重跑、新建或切换项目都会清除当前批次的预览视图、图像状态与临时选择，避免旧 ID 残留。
 
 ## 改动文件
@@ -65,8 +65,33 @@ git diff --check
 
 实现提交：`e5fb047 feat: add safe immersive preview review`。
 
+## ACC-PREVIEW-B01 安全返修
+
+- 返修基线：`486dd1b`（独立验收 `88e80d8` 后的自动文档同步）。
+- 代码提交：`a6ebb8b fix: fail closed on obfuscated SVG resources`。
+- 修改边界：仅修改 `apps/web/app/lib/preview-ui.mjs` 与 `apps/web/tests/preview-ui.test.mjs`；`preview-approval` API、Runner 门禁及其错误语义零改动。
+
+修复前，新增精确对抗回归可稳定复现 `style="fill:u\\72l(https://example.invalid/pixel.png)"` 被接受：`preview-ui.test.mjs` 共 6 项中 5 项通过、1 项失败，实际返回原 SVG 而不是 `null`。
+
+修复采用保守失败关闭策略：
+
+1. 不解析或放行任意内联 CSS，直接拒绝 `<style>` 与 `style` 属性。
+2. 对所有 SVG 属性值解码 XML 数字/标准字符引用，再拒绝 CSS 标识符转义与注释混淆，避免把危险语义隐藏在实体或反斜线后。
+3. 以不区分大小写且允许空白的方式逐个解析剩余 `url(...)`，资源仅允许同文档 `#id` 或 `data:image/png|jpeg|gif|webp;base64`；引号不闭合、资源不合法或外链一律返回 `null`。
+4. 对抗回归覆盖 CSS 标识符转义、CSS 注释、大小写/空白组合、转义协议及 XML 字符引用组合；兼容回归同时验证同文档引用、安全 `data:image` 和 Runner 当前生成的 3 份 SVG 全部可复用。
+
+返修后的自动验证：
+
+- Web Node tests：22/22 通过（修复前精确反例及新增对抗/兼容回归均通过）。
+- Web ESLint：通过。
+- Web production build：通过，路由仍包含唯一原 `preview-approval` API。
+- Trusted Runner：48/48 通过。
+- Mobile Spec：4/4 通过。
+- 文档检查与 `git diff --check`：通过。
+
 ## 剩余验证与风险
 
 - 需要独立验收在真实登录数据上逐条执行冻结清单，尤其是 `320×568`、触屏、读屏、焦点回返和加载失败注入；自动化检查不替代真实浏览器/读屏证据。
 - 方案采取“检测失败即拒绝呈现/选择”的保守安全策略。若未来 Runner 生成需要外部图片或活动 SVG 能力，必须另行设计受控资源策略，不能放宽当前失败关闭规则。
+- 当前策略为证明安全而拒绝所有 `<style>`、`style` 属性、CSS 转义与 CSS 注释；若未来生成器确需这些表达能力，应改用经过安全审计的 XML/CSS 解析与白名单序列化，而不是放宽字符串检测。
 - 现代浏览器基线依赖原生 `inert`；本需求不新增旧版浏览器兼容承诺。
