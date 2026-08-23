@@ -14,7 +14,7 @@ Web 控制面已补齐“看清楚后再选择”的前端闭环：
 3. 上一张/下一张与 `←`/`→` 仅在当前批次范围内导航，不循环；文本输入上下文不劫持方向键。方向切换保留画布，重新打开默认桌面。
 4. 桌面 `1440×900`、平板 `768×1024`、手机 `390×844` 三种模拟画布复用同一份已获取 SVG，使用 `object-fit: contain` 等比完整呈现；声明持续说明评审图不是最终页面。
 5. 卡片和沉浸预览复用唯一 `selectedPreviewId`；预览内选择不会调用确认 API，原“确认生成”仍是唯一可信确认入口。
-6. SVG 以不可信资产处理。纯函数安全检查拒绝脚本、事件属性、外链导航/资源、活动元素、`foreignObject`、DOCTYPE/ENTITY、任意 namespace 前缀、`style` 元素/属性、CSS 转义与注释混淆；只允许 canonical 默认 SVG namespace，所有属性值先解码一次合法 XML 字符引用，再仅允许同文档 `#id` 或安全的 base64 栅格 `data:image` 资源。失败方向显示可读错误并禁止选择，但仍可继续导航。
+6. SVG 以不可信资产处理。纯函数安全检查拒绝脚本、事件属性、外链导航/资源、SMIL 动画与突变、`foreignObject`、DOCTYPE/ENTITY、任意 namespace 前缀、`style` 元素/属性、CSS 转义与注释混淆；只允许 canonical 默认 SVG namespace，所有属性值先解码一次合法 XML 字符引用，再仅允许同文档 `#id` 或安全的 base64 栅格 `data:image` 资源。失败方向显示可读错误并禁止选择，但仍可继续导航。
 7. 换一组、完整重跑、新建或切换项目都会清除当前批次的预览视图、图像状态与临时选择，避免旧 ID 残留。
 
 ## 改动文件
@@ -112,10 +112,33 @@ Web 与 Node 没有可共享且行为一致的 namespace-aware XML 解析器，�
 - 文档检查与 `git diff --check`：通过。
 - `59b12ee..922da74` 对 `apps/web/app/api/`、`packages/codegen/`、设备验收资产与复审制品零改动。
 
+## SMIL 第三轮最小安全返修
+
+- 返修基线：`622a0e9`；独立复审制品：`docs/code-final-rereview-preview-sanitizer-4f7e537.md`（`e9fef40`）。
+- 代码提交：`ab3b489 fix: reject active SMIL preview elements`。
+- 修改边界：仅在既有危险元素集合增加 SMIL 活动元素，并在 `apps/web/tests/preview-ui.test.mjs` 增加精确回归；未修改 `preview-approval` API、Runner、设备验收资产、复审制品或既有 `.vscode/settings.json`。
+
+修复前，SMIL 精确语料使 `preview-ui.test.mjs` 9 项中 8 项通过、1 项失败；12 个 `set`/`animate`/motion/transform/color/discard 输入全部被错误接受。最小修复把 `set`、`animate`、`animateMotion`、`animateTransform`、`animateColor` 与 `discard` 全部纳入活动元素失败关闭集合。
+
+新增语料覆盖：
+
+- `set` 对 `href`、`xml:base` 的 `to` 突变；
+- `animate` 对 `href`、`xml:base` 的 `from`/`to`、`by`、`values` 突变；
+- `animateMotion`、`animateTransform`、`animateColor` 与 `discard` 活动语义。
+
+第三轮返修后的自动验证：
+
+- Web Node tests：25/25 通过；Web ESLint 与 production build 通过。
+- Runner 预览/确认门禁焦点回归：7/7 通过；Runner 全量：48/48 通过。
+- Mobile Spec：4/4 通过。
+- 文档检查与 `git diff --check`：通过。
+- 现有 namespace、XLink、CSS/XML、双重编码、安全 ampersand、canonical SVG、同文档 `#id`、安全 base64 栅格 `data:image` 与当前 3 份 Runner SVG 回归保持通过。
+
 ## 剩余验证与风险
 
 - 需要独立验收在真实登录数据上逐条执行冻结清单，尤其是 `320×568`、触屏、读屏、焦点回返和加载失败注入；自动化检查不替代真实浏览器/读屏证据。
 - 方案采取“检测失败即拒绝呈现/选择”的保守安全策略。若未来 Runner 生成需要外部图片或活动 SVG 能力，必须另行设计受控资源策略，不能放宽当前失败关闭规则。
 - 当前策略为证明安全而拒绝所有 `<style>`、`style` 属性、CSS 转义与 CSS 注释；若未来生成器确需这些表达能力，应改用经过安全审计的 XML/CSS 解析与白名单序列化，而不是放宽字符串检测。
 - Namespace 兼容边界同样保守：任何 prefixed SVG/XLink/XML 属性，即使资源本身安全，也会失败关闭。若未来生成器必须使用前缀，应先引入 Web/Node 一致的 namespace-aware 解析、完整树校验与安全重序列化。
+- 当前 SMIL 策略同样采取全量拒绝：安全的声明式动画不会进入预览呈现。未来若产品确需动画预览，应设计静态快照或经过完整解析、白名单与重序列化的独立路径，不应放宽当前评审门禁。
 - 现代浏览器基线依赖原生 `inert`；本需求不新增旧版浏览器兼容承诺。
