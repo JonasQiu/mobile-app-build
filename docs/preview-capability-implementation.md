@@ -63,7 +63,7 @@ git diff --check
 
 复现脚本为 `apps/web/tests/manual/immersive-preview-browser-check.mjs`。先运行 production server 和开启 `9223` CDP 端口的独立 Chrome，再从仓库根目录执行该脚本。
 
-提交号在首次提交后补记。
+实现提交：`e5fb047 feat: add safe immersive preview review`。
 
 ## 剩余验证与风险
 
