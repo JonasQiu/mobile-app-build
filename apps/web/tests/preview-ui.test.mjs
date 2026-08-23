@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
+import { generatePreviewSet, readPreviewArtifacts } from "../../../packages/codegen/src/preview.js";
 import { PREVIEW_CANVASES, previewIndexAfterMove, sanitizeReviewSvg } from "../app/lib/preview-ui.mjs";
 
 const safeSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
@@ -22,6 +26,17 @@ test("review SVG accepts passive markup and same-document references", () => {
   assert.match(sanitizeReviewSvg(`<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,AA==" /></svg>`), /data:image\/png/);
 });
 
+test("review SVG accepts all three generated preview directions", async (context) => {
+  const outDir = await mkdtemp(join(tmpdir(), "preview-ui-safe-"));
+  context.after(() => rm(outDir, { recursive: true, force: true }));
+  const requirement = "生成三份用于安全回归的现有预览";
+  await generatePreviewSet({ outDir, requirement, spec: "# Safe preview fixture", generation: 1 });
+
+  const artifacts = await readPreviewArtifacts({ outDir, requirement });
+  assert.equal(artifacts.length, 3);
+  for (const artifact of artifacts) assert.equal(sanitizeReviewSvg(artifact.content), artifact.content.trim());
+});
+
 test("review SVG fails closed for active content and external resources", () => {
   const unsafe = [
     `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
@@ -31,6 +46,17 @@ test("review SVG fails closed for active content and external resources", () => 
     `<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.com/pixel.png" /></svg>`,
     `<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:url(https://example.com/pixel.png)" /></svg>`,
     `<!DOCTYPE svg [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><svg xmlns="http://www.w3.org/2000/svg"></svg>`,
+  ];
+  for (const input of unsafe) assert.equal(sanitizeReviewSvg(input), null);
+});
+
+test("review SVG rejects obfuscated CSS resource fetches", () => {
+  const unsafe = [
+    `<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:u\\72l(https://example.invalid/pixel.png)" /></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg"><style>rect{fill:u/**/rl(https://example.invalid/pixel.png)}</style></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg"><rect fill=" UrL ( ' HTTPS://example.invalid/pixel.png ' )" /></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg"><rect fill="u\\72l(\\68ttps://example.invalid/pixel.png)" /></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg"><rect fill="u&#x72;l(&#x68;ttps://example.invalid/pixel.png)" /></svg>`,
   ];
   for (const input of unsafe) assert.equal(sanitizeReviewSvg(input), null);
 });

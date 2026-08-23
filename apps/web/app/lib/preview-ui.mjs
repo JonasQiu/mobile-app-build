@@ -5,15 +5,59 @@ export const PREVIEW_CANVASES = Object.freeze([
 ]);
 
 const SVG_ROOT = /^(?:<\?xml[^>]*>\s*)?<svg(?:\s|>)[\s\S]*<\/svg>\s*$/i;
-const FORBIDDEN_MARKUP = /<\s*(?:script|foreignObject|iframe|object|embed|audio|video|canvas|a)\b/i;
+const FORBIDDEN_MARKUP = /<\s*(?:script|style|foreignObject|iframe|object|embed|audio|video|canvas|a)\b/i;
 const EVENT_HANDLER = /\son[a-z0-9:_-]+\s*=/i;
 const ACTIVE_CONTENT = /(?:javascript\s*:|data\s*:\s*text\/html|<\s*!DOCTYPE|<\s*!ENTITY|<\?xml-stylesheet|@import)/i;
-const RESOURCE_ATTRIBUTE = /\s(?:href|xlink:href|src)\s*=\s*(?:(["'])(.*?)\1|([^\s>]+))/gi;
-const CSS_RESOURCE = /url\(\s*(["']?)(.*?)\1\s*\)/gi;
+const ATTRIBUTE = /\s([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+const RESOURCE_ATTRIBUTES = new Set(["href", "xlink:href", "src"]);
+const CSS_OBFUSCATION = /\\|\/\*|\*\//;
+
+function decodeXmlAttribute(value) {
+  let valid = true;
+  const decoded = value.replace(/&(?:#(\d+)|#x([\da-f]+)|(amp|lt|gt|quot|apos));/gi, (reference, decimal, hexadecimal, named) => {
+    if (named) {
+      return { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" }[named.toLowerCase()];
+    }
+    const codePoint = Number.parseInt(decimal ?? hexadecimal, decimal ? 10 : 16);
+    if (!Number.isInteger(codePoint) || codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
+      valid = false;
+      return "";
+    }
+    return String.fromCodePoint(codePoint);
+  });
+  if (!valid || /&(?:#|[a-z])/i.test(decoded)) return null;
+  return decoded;
+}
 
 function safeResource(value) {
   const resource = value.trim();
   return resource.startsWith("#") || /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(resource);
+}
+
+function hasOnlySafeCssResources(value) {
+  if (CSS_OBFUSCATION.test(value)) return false;
+  const urlStart = /url\s*\(/gi;
+
+  while (urlStart.exec(value) !== null) {
+    let cursor = urlStart.lastIndex;
+    while (/\s/.test(value[cursor] ?? "")) cursor += 1;
+    const quote = value[cursor] === '"' || value[cursor] === "'" ? value[cursor++] : null;
+    const end = quote ? value.indexOf(quote, cursor) : value.indexOf(")", cursor);
+    if (end < 0) return false;
+
+    const resource = value.slice(cursor, end);
+    cursor = end + (quote ? 1 : 0);
+    if (quote) {
+      while (/\s/.test(value[cursor] ?? "")) cursor += 1;
+      if (value[cursor] !== ")") return false;
+    } else if (/["']/.test(resource)) {
+      return false;
+    }
+    if (!safeResource(resource)) return false;
+    urlStart.lastIndex = cursor + 1;
+  }
+
+  return true;
 }
 
 /**
@@ -26,13 +70,11 @@ export function sanitizeReviewSvg(content) {
   const svg = content.trim();
   if (!SVG_ROOT.test(svg) || FORBIDDEN_MARKUP.test(svg) || EVENT_HANDLER.test(svg) || ACTIVE_CONTENT.test(svg)) return null;
 
-  for (const match of svg.matchAll(RESOURCE_ATTRIBUTE)) {
-    const value = match[2] ?? match[3] ?? "";
-    if (!safeResource(value)) return null;
-  }
-
-  for (const match of svg.matchAll(CSS_RESOURCE)) {
-    if (!safeResource(match[2] ?? "")) return null;
+  for (const match of svg.matchAll(ATTRIBUTE)) {
+    const name = match[1].toLowerCase();
+    const value = decodeXmlAttribute(match[2] ?? match[3] ?? match[4] ?? "");
+    if (value === null || name === "style" || !hasOnlySafeCssResources(value)) return null;
+    if (RESOURCE_ATTRIBUTES.has(name) && !safeResource(value)) return null;
   }
 
   return svg;
