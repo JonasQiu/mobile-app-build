@@ -114,6 +114,51 @@ Web 控制站运行在 Cloudflare Worker 环境，适合处理 HTTP 请求和持
 
 这种设计使 AI 生成和构建行为始终发生在受信任环境中，同时保留了 Web 产品轻量、易部署的特点。
 
+### 3.3 基础设施与执行链路名词解析
+
+#### 平台与存储
+
+| 名词 | 名词解析 | 在项目中的功能点 | 状态 |
+|---|---|---|---|
+| OpenAI Sites | 面向 Web 应用的构建、运行和发布平台 | 托管 SiteForge AI 控制站，提供公网入口、ChatGPT 登录和运行资源绑定 | 已使用 |
+| Cloudflare Workers 兼容环境 | 面向边缘网络的无服务器 JavaScript 运行模型 | 运行控制站服务端接口，处理身份校验、项目读写、任务派发、状态同步和结果查询 | 已使用 |
+| Cloudflare D1 | 基于 SQLite 的无服务器关系型数据库 | 持久保存用户映射、会话、需求、项目历史、步骤状态、预览审批、Runner 地址和交付 URL | 已使用 |
+| Cloudflare Pages | 面向网站的持续部署和托管平台 | 可用于为生成网站提供持久域名、版本部署和回滚，替换临时交付地址 | 规划中 |
+| Cloudflare R2 | 面向文件与大对象的云端对象存储 | 可用于集中保存源码包、预览图、构建日志和部署证据，避免产物只保留在执行机器 | 规划中 |
+
+#### Runner
+
+| 名词 | 名词解析 | 在项目中的功能点 | 状态 |
+|---|---|---|---|
+| Trusted Runner | 受控制面信任并持有执行凭证的任务执行服务，是执行面角色的总称 | 接收任务，运行 Mobile Spec 和 Codex，写入项目文件，安装依赖，执行生产构建、部署与失败修复 | 已使用 |
+| Codex Runner | 产品界面对“具备 Codex 执行能力的 Trusted Runner”的简称，不是 Codex 模型本身 | 承接页面生成与定向修复任务；“Codex Runner 不可用”表示执行服务未连通，而不是模型生成失败 | 已使用 |
+| Local Runner / 本机 Runner | Trusted Runner 当前的部署形态，运行在受控 macOS 机器上 | 提供真实文件系统、Node.js、npm、Codex CLI 和子进程执行能力 | 已使用 |
+| LaunchAgent | macOS 的用户级后台进程管理机制 | 登录后自动启动 Runner，在进程异常退出后重新拉起，并注入稳定的 Node/npm 与隧道环境 | 已使用 |
+| Runner Endpoint | 控制面派发和查询任务时访问的 Runner HTTPS 地址 | 暴露 `/jobs`、`/health` 等接口；新地址验证通过后登记到 D1 | 已使用 |
+| Cloud Runner | 部署在云端隔离环境中的 Runner 形态 | 未来替换单机 Runner，减少对本机在线状态和临时公网入口的依赖 | 规划中 |
+| Runner Pool | 由多个可调度 Runner 组成的执行资源池 | 未来提供弹性并发、任务租约、故障接管、资源配额和横向扩容 | 规划中 |
+
+#### Tunnel 与部署
+
+| 名词 | 名词解析 | 在项目中的功能点 | 状态 |
+|---|---|---|---|
+| Cloudflare Tunnel | 将内网或本地 HTTP 服务安全暴露到公网的反向隧道能力 | 让云端控制面访问本机服务，不需要直接开放本机公网端口 | 已使用 |
+| Quick Tunnel | 无需预先配置固定域名即可创建的临时 Cloudflare Tunnel，通常返回 `trycloudflare.com` 地址 | 用于开发与验收；地址可能变化且没有持久性和 SLA | 已使用 |
+| Runner 控制隧道 | 专门连接控制站与 Runner API 的 Quick Tunnel | 控制面通过它派发任务、查询实时进度、读取产物和检查 Runner 健康状态 | 已使用 |
+| 生成站点部署隧道 | 专门连接生成网站本地服务与公网的 Quick Tunnel | 构建完成后生成临时 HTTPS 验收地址，健康检查通过后作为当前交付 URL 返回 | 已使用 |
+| Tunnel 自动轮换 | 旧隧道失效后创建新地址并替换登记信息的恢复机制 | 出现 DNS、1016、5xx 或持续连接失败时重建隧道，同时保留已成功的执行检查点 | 已使用 |
+| 公网健康检查 | 从公网验证目标 URL 是否真实可访问的交付门禁 | 检查 Runner 和生成网站地址，只有部署地址通过验证才允许进入交付终态 | 已使用 |
+| Deployment Provider | 对不同网站发布平台的统一部署接口 | 当前接入 Quick Tunnel 验收实现；未来可替换为 Cloudflare Pages、OpenAI Sites、Vercel 或自有平台 | 部分实现 |
+
+#### 已落地的功能点
+
+- 控制站负责身份、项目和状态，Trusted Runner 负责真实执行，浏览器不能伪造执行终态；
+- 本机 Runner 通过 LaunchAgent 自动启动和保活，并提供稳定的 Node/npm/Codex 执行环境；
+- Runner 控制隧道负责任务通信，生成站点部署隧道负责临时网站交付，两条隧道职责分离；
+- Runner Endpoint 经公网健康检查和实例身份验证后写入 D1，临时地址变化时可以自动更新；
+- Tunnel 失效时自动轮换地址，不重新执行已经成功的 Mobile Spec、Codex 实现和生产构建；
+- Cloudflare Pages、R2、Cloud Runner 和 Runner Pool 属于后续生产化能力，不作为当前已实现功能描述。
+
 ## 4. 架构设计
 
 ### 4.1 当前系统架构

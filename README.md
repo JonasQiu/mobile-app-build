@@ -1,5 +1,7 @@
 # Mobile Build
 
+> **Codex / 开发者入口：** 新任务先读取 [AGENTS.md](AGENTS.md)，再从 [SiteForge AI 开发文档](docs/development/README.md) 进入对应章节。
+
 Mobile Build 是一个移动端网站生成控制台：用户输入一句完整需求，系统通过受信任 Runner 执行 **需求 → Mobile Spec → 3 份视觉预览 → 用户确认 → Codex 实现 → 生产构建 → 部署 → HTTPS URL**。
 
 当前版本以用户的完整需求为唯一生成输入，不依赖关键词模板或固定业务页面。Mobile Spec 通过后，Runner 先生成 3 份需求专属 SVG 评审图并进入持久化的待确认状态；用户选择方案前不会调用 Codex 或写正式网站源码，确认的视觉方向会进入生成约束。执行页每 15 秒同步 Runner 真实消息，运行中的任务可暂停；同一对话会复用成功步骤，失败步骤保留错误与子阶段进度并原地修复，只有“重跑”才清除检查点。规格、预览、实现、构建、部署支持单步执行，各步骤产物可独立查看。历史记录支持删除，共享 Runner 全站最多同时执行 2 个需求。只有预览已确认、Mobile Spec、生产构建、部署和公网健康检查全部通过，项目才进入 `delivered`。
@@ -87,4 +89,4 @@ cd ../../packages/codegen
 npm test
 ```
 
-完整入口见 [文档中心](docs/文档中心.md)。
+开发者从 [SiteForge AI 开发文档](docs/development/README.md) 开始；产品、架构和协议完整入口见 [文档中心](docs/文档中心.md)。
