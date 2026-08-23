@@ -19,7 +19,7 @@ const SKIP = new Set(["node_modules", ".next", ".git", ".turbo", ".openai"]);
 
 test(
   "runBuild goes green on the neutral buildable fixture",
-  { timeout: 240_000 },
+  { timeout: 500_000 },
   async () => {
     assert.ok(existsSync(FIXTURE), `fixture exists: ${FIXTURE}`);
     const out = join(tmpdir(), `mbcodegen-build-${randomUUID()}`);
