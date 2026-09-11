@@ -1,0 +1,158 @@
+{
+  "baseline": "c2b6bd391a764b7efc73105180d1a8a8d2dcb38f",
+  "businessBaseline": "2f178fae00cb49746b9ee24b924d35d1fa077c8d",
+  "generatedAt": "2026-09-11T16:32:57.654Z",
+  "adversarialMatrix": {
+    "unsafe": 70,
+    "smil": 48,
+    "passiveCompatibility": 9
+  },
+  "summary": {
+    "pass": 11,
+    "fail": 0
+  },
+  "results": [
+    {
+      "id": "svg-adversarial-fail-closed",
+      "status": "pass",
+      "actual": {
+        "total": 70,
+        "rejected": 70,
+        "failures": []
+      },
+      "expected": "70/70 unsafe SVGs rejected"
+    },
+    {
+      "id": "svg-static-compatibility",
+      "status": "pass",
+      "actual": {
+        "total": 9,
+        "accepted": 9,
+        "failures": []
+      },
+      "expected": "9/9 passive SVGs accepted"
+    },
+    {
+      "id": "generated-current-batch-three-stable-ids",
+      "status": "pass",
+      "actual": {
+        "setId": "set_mtx6d91d_c20a29d9",
+        "ids": [
+          "set_mtx6d91d_c20a29d9_p1",
+          "set_mtx6d91d_c20a29d9_p2",
+          "set_mtx6d91d_c20a29d9_p3"
+        ],
+        "formats": [
+          "svg",
+          "svg",
+          "svg"
+        ]
+      },
+      "expected": "three SVGs with unique stable IDs scoped to one set"
+    },
+    {
+      "id": "historical-svg-reuse-byte-stable",
+      "status": "pass",
+      "actual": {
+        "firstHashes": [
+          "7f91b76084107cee68bf5407ba616d799220570e13b5afba548fd3262f781466",
+          "64dc971a051427b8bc3a8138b35034009d1fe9ad541420765485bd513a47fa69",
+          "0f1eac30598f5e9dc28eb50581efb978fb239849f6fd5d7051fc9796a55f6508"
+        ],
+        "repeatedHashes": [
+          "7f91b76084107cee68bf5407ba616d799220570e13b5afba548fd3262f781466",
+          "64dc971a051427b8bc3a8138b35034009d1fe9ad541420765485bd513a47fa69",
+          "0f1eac30598f5e9dc28eb50581efb978fb239849f6fd5d7051fc9796a55f6508"
+        ]
+      },
+      "expected": "repeated reads reuse identical SVG bytes"
+    },
+    {
+      "id": "generated-svg-safe-accessible-text",
+      "status": "pass",
+      "actual": [
+        {
+          "id": "set_mtx6d91d_c20a29d9_p1",
+          "safe": true,
+          "title": true,
+          "desc": true
+        },
+        {
+          "id": "set_mtx6d91d_c20a29d9_p2",
+          "safe": true,
+          "title": true,
+          "desc": true
+        },
+        {
+          "id": "set_mtx6d91d_c20a29d9_p3",
+          "safe": true,
+          "title": true,
+          "desc": true
+        }
+      ],
+      "expected": "all generated directions sanitize and contain title/desc"
+    },
+    {
+      "id": "runner-first-gate-rejects-stale-id",
+      "status": "pass",
+      "actual": {
+        "approved": "set_mtx6d91d_c20a29d9_p2",
+        "firstSet": "set_mtx6d91d_c20a29d9",
+        "secondSet": "set_mtx6d92b_853312bd",
+        "beforeRegenerate": true,
+        "afterRegenerate": false
+      },
+      "expected": "current ID passes; old ID fails validatePreviewApproval after regeneration"
+    },
+    {
+      "id": "runner-second-gate-rejects-race",
+      "status": "pass",
+      "actual": {
+        "firstGatePasses": true,
+        "readApprovedAfterRegenerate": null
+      },
+      "expected": "ID that passed first validation is rejected by readApprovedPreview after batch replacement"
+    },
+    {
+      "id": "preview-actions-have-no-approval-call",
+      "status": "pass",
+      "actual": {
+        "openBlock": true,
+        "selectBlock": true,
+        "moveBlock": true,
+        "isolated": true
+      },
+      "expected": "open, navigation and select contain no approval or run dispatch"
+    },
+    {
+      "id": "only-original-confirm-fetches-approval",
+      "status": "pass",
+      "actual": {
+        "approvalFetches": 1,
+        "approveFunction": true
+      },
+      "expected": "exactly one approval fetch inside original confirm function"
+    },
+    {
+      "id": "control-plane-trusted-approval-gate",
+      "status": "pass",
+      "actual": {
+        "artifactSvgCheck": true,
+        "persistedSelection": true,
+        "dispatchRequiresApprovedId": true,
+        "rejectionSemantic": true
+      },
+      "expected": "approval route validates current SVG and dispatch requires persisted approved ID"
+    },
+    {
+      "id": "runner-double-validation-intact",
+      "status": "pass",
+      "actual": {
+        "runnerFirst": true,
+        "generatorSecond": true,
+        "failClosedMessage": true
+      },
+      "expected": "Runner validates before generation and generator rereads approved current direction"
+    }
+  ]
+}

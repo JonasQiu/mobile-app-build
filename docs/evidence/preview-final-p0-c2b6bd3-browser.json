@@ -1,0 +1,807 @@
+{
+  "baseline": "c2b6bd391a764b7efc73105180d1a8a8d2dcb38f",
+  "businessBaseline": "2f178fae00cb49746b9ee24b924d35d1fa077c8d",
+  "generatedAt": "2026-09-11T16:37:40.693Z",
+  "browser": "Chrome/152.0.7977.83",
+  "protocolVersion": "1.3",
+  "executionSurface": {
+    "loopbackCdp": true,
+    "localProduction": true,
+    "disposableIsolatedProfile": true,
+    "realLoginData": "unavailable; mock API responses only",
+    "cdpTouchEmulation": true,
+    "physicalTouch": "unavailable",
+    "chromiumAccessibilityTree": true,
+    "realVoiceOver": "unavailable",
+    "implementationEvidenceUsedAsAcceptanceEvidence": false
+  },
+  "summary": {
+    "pass": 23,
+    "fail": 3
+  },
+  "results": [
+    {
+      "id": "current-batch-three-stable-directions",
+      "status": "pass",
+      "actual": {
+        "cards": [
+          {
+            "label": "方向 A1 · 清晰秩序",
+            "selected": false
+          },
+          {
+            "label": "方向 B1 · 轻盈编辑",
+            "selected": false
+          },
+          {
+            "label": "方向 C1 · 鲜明行动",
+            "selected": false
+          }
+        ],
+        "confirmDisabled": true,
+        "approvalCalls": 0
+      },
+      "expected": "three current-batch directions, none selected"
+    },
+    {
+      "id": "browse-without-selection-confirm-disabled",
+      "status": "pass",
+      "actual": {
+        "confirmDisabled": true,
+        "approvalCalls": 0
+      },
+      "expected": {
+        "confirmDisabled": true,
+        "approvalCalls": 0
+      }
+    },
+    {
+      "id": "open-second-default-desktop-no-auto-select",
+      "status": "pass",
+      "actual": {
+        "role": "dialog",
+        "modal": "true",
+        "labelledby": "immersive-preview-title",
+        "describedby": "immersive-preview-description immersive-preview-disclaimer",
+        "title": "方向 B1 · 轻盈编辑",
+        "index": "2/3",
+        "device": "桌面1440 × 900",
+        "disclaimer": "评审图不是最终页面；设备画布仅为尺寸模拟，不代表真实设备或最终实现。",
+        "focus": "关闭沉浸预览",
+        "backgroundInert": true,
+        "selectedCards": 0,
+        "canvasRatio": 1.6,
+        "naturalRatio": 1.6,
+        "objectFit": "contain",
+        "approvalCalls": 0
+      },
+      "expected": "direction B1, 2/3, desktop 1440x900, no selection or approval"
+    },
+    {
+      "id": "dialog-semantics-disclaimer-inert",
+      "status": "pass",
+      "actual": {
+        "role": "dialog",
+        "modal": "true",
+        "labelledby": "immersive-preview-title",
+        "describedby": "immersive-preview-description immersive-preview-disclaimer",
+        "title": "方向 B1 · 轻盈编辑",
+        "index": "2/3",
+        "device": "桌面1440 × 900",
+        "disclaimer": "评审图不是最终页面；设备画布仅为尺寸模拟，不代表真实设备或最终实现。",
+        "focus": "关闭沉浸预览",
+        "backgroundInert": true,
+        "selectedCards": 0,
+        "canvasRatio": 1.6,
+        "naturalRatio": 1.6,
+        "objectFit": "contain",
+        "approvalCalls": 0
+      },
+      "expected": "named modal dialog, persistent disclaimer, inert background, focus inside"
+    },
+    {
+      "id": "svg-complete-aspect",
+      "status": "pass",
+      "actual": {
+        "canvasRatio": 1.6,
+        "naturalRatio": 1.6,
+        "objectFit": "contain"
+      },
+      "expected": "object-fit contain and 1440:900 ratio"
+    },
+    {
+      "id": "tab-shifttab-focus-trap",
+      "status": "pass",
+      "actual": {
+        "shiftWrap": {
+          "inside": true,
+          "className": "immersive-preview-select "
+        },
+        "focusOrder": [
+          {
+            "inside": true,
+            "name": "关闭沉浸预览"
+          },
+          {
+            "inside": true,
+            "name": "桌面1440 × 900"
+          },
+          {
+            "inside": true,
+            "name": "平板768 × 1024"
+          },
+          {
+            "inside": true,
+            "name": "手机390 × 844"
+          },
+          {
+            "inside": true,
+            "name": "← 上一张"
+          },
+          {
+            "inside": true,
+            "name": "下一张 →"
+          },
+          {
+            "inside": true,
+            "name": "选择此方案"
+          }
+        ]
+      },
+      "expected": "Shift+Tab wraps to select; seven controls remain in dialog in visual order"
+    },
+    {
+      "id": "three-canvases-keyboard-and-continuity",
+      "status": "pass",
+      "actual": {
+        "current": "手机390 × 844",
+        "caption": "手机模拟画布 · 390 × 844 · SVG 等比完整容纳",
+        "selected": 0
+      },
+      "expected": "tablet then mobile via Enter/Space; no selection"
+    },
+    {
+      "id": "arrow-navigation-boundaries-no-selection",
+      "status": "pass",
+      "actual": {
+        "firstBoundary": {
+          "index": "1/3",
+          "previousDisabled": true,
+          "device": "手机390 × 844",
+          "selected": 0
+        },
+        "thirdBoundary": {
+          "index": "3/3",
+          "nextDisabled": true,
+          "device": "手机390 × 844",
+          "selected": 0
+        },
+        "approvalCalls": 0
+      },
+      "expected": "non-cyclic 1/3 and 3/3 boundaries, canvas retained, no selection/approval"
+    },
+    {
+      "id": "arrow-text-entry-guard",
+      "status": "pass",
+      "actual": {
+        "index": "2/3",
+        "focused": "p0-text-entry"
+      },
+      "expected": "ArrowRight ignored in text input"
+    },
+    {
+      "id": "select-second-single-source-not-confirmed",
+      "status": "pass",
+      "actual": {
+        "text": "✓ 已选择，尚未最终确认",
+        "pressed": "true",
+        "selectedCount": 1,
+        "secondSelected": true,
+        "announcement": "已选择方向 B1 · 轻盈编辑，尚未最终确认生成",
+        "approvalCalls": 0
+      },
+      "expected": "only direction 2 selected; announced as not finally confirmed; no approval call"
+    },
+    {
+      "id": "escape-return-and-selection-retention",
+      "status": "fail",
+      "actual": {
+        "returnedToSecondTrigger": false,
+        "activeTag": "BODY",
+        "activeClass": "",
+        "activeName": "☰Mobile Build真实构建 · 证据式交付+做一个可访问的活动报名网站✦最终预览 P0 独立验收已生成多份需求专属预览。选择并确认前，不会调用 Code",
+        "selectedCount": 1,
+        "secondSelected": true,
+        "backgroundInert": false
+      },
+      "expected": "Esc closes, focus returns to direction 2 trigger, selection remains, background restored"
+    },
+    {
+      "id": "replace-unique-selection-and-explicit-close",
+      "status": "fail",
+      "actual": {
+        "selectedCount": 1,
+        "thirdSelected": true,
+        "returnedToThirdTrigger": false,
+        "activeTag": "BODY",
+        "activeClass": "",
+        "activeName": "☰Mobile Build真实构建 · 证据式交付+做一个可访问的活动报名网站✦最终预览 P0 独立验收已生成多份需求专属预览。选择并确认前，不会调用 Code",
+        "approvalCalls": 0
+      },
+      "expected": "only direction 3 selected; explicit close returns to direction 3 trigger; no approval"
+    },
+    {
+      "id": "cdp-touch-core-path-390x844",
+      "status": "pass",
+      "actual": {
+        "touchOpenIndex": "3/3",
+        "expectedTouchIndex": "2/3",
+        "touchNavigated": true,
+        "touchChangedCanvas": true,
+        "touchSelected": true,
+        "touchEvents": [
+          {
+            "type": "pointerdown",
+            "target": "沉浸预览⛶",
+            "pointerType": "touch",
+            "trusted": true
+          },
+          {
+            "type": "touchstart",
+            "target": "沉浸预览⛶",
+            "pointerType": "",
+            "trusted": true
+          },
+          {
+            "type": "touchend",
+            "target": "沉浸预览⛶",
+            "pointerType": "",
+            "trusted": true
+          },
+          {
+            "type": "click",
+            "target": "沉浸预览⛶",
+            "pointerType": "touch",
+            "trusted": true
+          },
+          {
+            "type": "pointerdown",
+            "target": "← 上一张",
+            "pointerType": "touch",
+            "trusted": true
+          },
+          {
+            "type": "touchstart",
+            "target": "← 上一张",
+            "pointerType": "",
+            "trusted": true
+          },
+          {
+            "type": "touchend",
+            "target": "← 上一张",
+            "pointerType": "",
+            "trusted": true
+          },
+          {
+            "type": "click",
+            "target": "← 上一张",
+            "pointerType": "touch",
+            "trusted": true
+          },
+          {
+            "type": "pointerdown",
+            "target": "手机",
+            "pointerType": "touch",
+            "trusted": true
+          },
+          {
+            "type": "touchstart",
+            "target": "手机",
+            "pointerType": "",
+            "trusted": true
+          },
+          {
+            "type": "touchend",
+            "target": "手机",
+            "pointerType": "",
+            "trusted": true
+          },
+          {
+            "type": "click",
+            "target": "手机",
+            "pointerType": "touch",
+            "trusted": true
+          },
+          {
+            "type": "pointerdown",
+            "target": "选择此方案",
+            "pointerType": "touch",
+            "trusted": true
+          },
+          {
+            "type": "touchstart",
+            "target": "选择此方案",
+            "pointerType": "",
+            "trusted": true
+          },
+          {
+            "type": "touchend",
+            "target": "选择此方案",
+            "pointerType": "",
+            "trusted": true
+          },
+          {
+            "type": "click",
+            "target": "选择此方案",
+            "pointerType": "touch",
+            "trusted": true
+          }
+        ],
+        "layout390": {
+          "innerWidth": 390,
+          "innerHeight": 844,
+          "rootScrollWidth": 390,
+          "bodyScrollWidth": 390,
+          "dialogClientWidth": 390,
+          "dialogScrollWidth": 390,
+          "minButtonWidth": 44,
+          "minButtonHeight": 44,
+          "buttons": [
+            {
+              "name": "关闭沉浸预览",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "name": "桌面1440 × 900",
+              "width": 118.65625,
+              "height": 52
+            },
+            {
+              "name": "平板768 × 1024",
+              "width": 118.671875,
+              "height": 52
+            },
+            {
+              "name": "手机390 × 844",
+              "width": 118.65625,
+              "height": 52
+            },
+            {
+              "name": "← 上一张",
+              "width": 94,
+              "height": 44
+            },
+            {
+              "name": "下一张 →",
+              "width": 94,
+              "height": 44
+            },
+            {
+              "name": "✓ 已选择，尚未最终确认",
+              "width": 320,
+              "height": 48
+            }
+          ],
+          "selectedCount": 1,
+          "currentIndex": "2/3",
+          "currentDevice": "手机390 × 844",
+          "naturalRatio": 1.6,
+          "objectFit": "contain"
+        }
+      },
+      "expected": "trusted CDP touch opens a direction, navigates one step, switches canvas and selects at 390x844; no horizontal overflow; all dialog buttons >=44x44"
+    },
+    {
+      "id": "responsive-320x568-reachable-and-stateful",
+      "status": "pass",
+      "actual": {
+        "stateBeforeResize": {
+          "index": "2/3",
+          "device": "手机390 × 844",
+          "selectedSecond": true
+        },
+        "layout320": {
+          "innerWidth": 320,
+          "innerHeight": 568,
+          "rootScrollWidth": 320,
+          "bodyScrollWidth": 320,
+          "dialogClientWidth": 320,
+          "dialogScrollWidth": 320,
+          "dialogClientHeight": 568,
+          "dialogScrollHeight": 980,
+          "minButtonWidth": 44,
+          "minButtonHeight": 44,
+          "buttons": [
+            {
+              "name": "关闭沉浸预览",
+              "width": 44,
+              "height": 44,
+              "top": 12,
+              "bottom": 56
+            },
+            {
+              "name": "桌面1440 × 900",
+              "width": 96.65625,
+              "height": 52,
+              "top": 140.796875,
+              "bottom": 192.796875
+            },
+            {
+              "name": "平板768 × 1024",
+              "width": 96.671875,
+              "height": 52,
+              "top": 140.796875,
+              "bottom": 192.796875
+            },
+            {
+              "name": "手机390 × 844",
+              "width": 96.65625,
+              "height": 52,
+              "top": 140.796875,
+              "bottom": 192.796875
+            },
+            {
+              "name": "← 上一张",
+              "width": 86,
+              "height": 44,
+              "top": 866.0625,
+              "bottom": 910.0625
+            },
+            {
+              "name": "下一张 →",
+              "width": 86,
+              "height": 44,
+              "top": 866.0625,
+              "bottom": 910.0625
+            },
+            {
+              "name": "✓ 已选择，尚未最终确认",
+              "width": 300,
+              "height": 48,
+              "top": 920.0625,
+              "bottom": 968.0625
+            }
+          ]
+        }
+      },
+      "expected": "state retained; vertical scroll reaches controls; no horizontal overflow; all targets >=44x44"
+    },
+    {
+      "id": "orientation-resize-retains-state",
+      "status": "pass",
+      "actual": {
+        "innerWidth": 844,
+        "innerHeight": 390,
+        "rootScrollWidth": 844,
+        "dialogScrollWidth": 822,
+        "dialogClientWidth": 822,
+        "index": "2/3",
+        "device": "手机390 × 844",
+        "selectedSecond": true
+      },
+      "expected": "landscape resize keeps direction, canvas and selection without horizontal overflow"
+    },
+    {
+      "id": "tablet-viewport-core-state",
+      "status": "pass",
+      "actual": {
+        "innerWidth": 768,
+        "innerHeight": 1024,
+        "rootScrollWidth": 768,
+        "dialogScrollWidth": 746,
+        "dialogClientWidth": 746,
+        "index": "2/3",
+        "device": "手机390 × 844",
+        "selectedSecond": true,
+        "objectFit": "contain",
+        "naturalRatio": 1.6
+      },
+      "expected": "768x1024 viewport preserves core path state, contains SVG and has no horizontal overflow"
+    },
+    {
+      "id": "reduced-motion",
+      "status": "pass",
+      "actual": {
+        "matches": true,
+        "values": [
+          {
+            "animation": "1e-05s",
+            "transition": "1e-05s"
+          },
+          {
+            "animation": "1e-05s",
+            "transition": "1e-05s"
+          },
+          {
+            "animation": "1e-05s",
+            "transition": "1e-05s"
+          },
+          {
+            "animation": "1e-05s",
+            "transition": "1e-05s"
+          },
+          {
+            "animation": "1e-05s",
+            "transition": "1e-05s"
+          },
+          {
+            "animation": "1e-05s",
+            "transition": "1e-05s"
+          },
+          {
+            "animation": "1e-05s",
+            "transition": "1e-05s"
+          },
+          {
+            "animation": "1e-05s",
+            "transition": "1e-05s"
+          },
+          {
+            "animation": "1e-05s",
+            "transition": "1e-05s"
+          },
+          {
+            "animation": "1e-05s",
+            "transition": "1e-05s"
+          }
+        ]
+      },
+      "expected": "all dialog animation/transition durations <=0.02ms under reduce"
+    },
+    {
+      "id": "text-control-contrast",
+      "status": "pass",
+      "actual": {
+        "minTextContrast": 7.968486102871941,
+        "samples": [
+          {
+            "name": "title",
+            "foreground": "rgb(245, 247, 249)",
+            "background": [
+              11,
+              15,
+              19,
+              1
+            ],
+            "ratio": 17.907860691535074
+          },
+          {
+            "name": "description",
+            "foreground": "rgb(170, 180, 188)",
+            "background": [
+              11,
+              15,
+              19,
+              1
+            ],
+            "ratio": 9.124746590195892
+          },
+          {
+            "name": "disclaimer",
+            "foreground": "rgb(214, 229, 248)",
+            "background": [
+              17,
+              28,
+              41,
+              1
+            ],
+            "ratio": 13.439462302599441
+          },
+          {
+            "name": "device-label",
+            "foreground": "rgb(231, 236, 239)",
+            "background": [
+              23,
+              29,
+              35,
+              1
+            ],
+            "ratio": 14.268592587370252
+          },
+          {
+            "name": "device-size",
+            "foreground": "rgb(169, 179, 187)",
+            "background": [
+              23,
+              29,
+              35,
+              1
+            ],
+            "ratio": 7.968486102871941
+          },
+          {
+            "name": "navigation",
+            "foreground": "rgb(255, 255, 255)",
+            "background": [
+              32,
+              39,
+              46,
+              1
+            ],
+            "ratio": 15.096247240761315
+          },
+          {
+            "name": "select",
+            "foreground": "rgb(169, 255, 87)",
+            "background": [
+              11,
+              15,
+              19,
+              1
+            ],
+            "ratio": 15.6860951413888
+          }
+        ]
+      },
+      "expected": ">=4.5:1 for sampled dialog text and controls"
+    },
+    {
+      "id": "chromium-accessibility-tree",
+      "status": "pass",
+      "actual": {
+        "nodeCount": 106,
+        "dialog": {
+          "name": "方向 B1 · 轻盈编辑",
+          "description": "轻盈编辑；批次 1 的稳定方向 2 评审图不是最终页面；设备画布仅为尺寸模拟，不代表真实设备或最终实现。",
+          "modal": true
+        },
+        "buttons": [
+          {
+            "name": "✓ 已选择，尚未最终确认",
+            "pressed": "true"
+          },
+          {
+            "name": "关闭沉浸预览"
+          },
+          {
+            "name": "桌面 1440 × 900",
+            "pressed": "false"
+          },
+          {
+            "name": "平板 768 × 1024",
+            "pressed": "false"
+          },
+          {
+            "name": "手机 390 × 844",
+            "pressed": "true"
+          },
+          {
+            "name": "← 上一张"
+          },
+          {
+            "name": "下一张 →"
+          }
+        ],
+        "liveRegions": [
+          {
+            "role": "paragraph",
+            "name": "",
+            "live": "polite",
+            "atomic": true
+          }
+        ]
+      },
+      "expected": "named dialog; named/pressed controls; polite live region in Chromium AX tree"
+    },
+    {
+      "id": "cdp-touch-close",
+      "status": "pass",
+      "actual": {
+        "touchClosed": true
+      },
+      "expected": "trusted CDP touch closes immersive preview"
+    },
+    {
+      "id": "regenerate-clears-old-state",
+      "status": "pass",
+      "actual": {
+        "labels": [
+          "方向 A2 · 清晰秩序",
+          "方向 B2 · 轻盈编辑",
+          "方向 C2 · 鲜明行动"
+        ],
+        "selectedCount": 0,
+        "confirmDisabled": true,
+        "failedCards": 1,
+        "approvalCalls": 0
+      },
+      "expected": "only batch 2 remains; old selection cleared; invalid direction failed; no approval"
+    },
+    {
+      "id": "unsafe-svg-fails-closed-and-navigation-recovers",
+      "status": "pass",
+      "actual": {
+        "failedPreview": {
+          "index": "2/3",
+          "alert": "该方向无法安全载入可以继续查看上一张或下一张；当前方向不能选择。",
+          "selectDisabled": true,
+          "nextDisabled": false,
+          "previousDisabled": false,
+          "announcement": "已打开方向 2，方向 B2 · 轻盈编辑，桌面画布"
+        },
+        "externalRequests": []
+      },
+      "expected": "unsafe SVG is readable failure, unselectable, adjacent safe directions work, no external request"
+    },
+    {
+      "id": "regenerated-reused-svg-loads-ready",
+      "status": "fail",
+      "actual": {
+        "cards": [
+          {
+            "label": "方向 A3 · 清晰秩序",
+            "failed": false,
+            "selectDisabled": true,
+            "loading": true,
+            "imageComplete": true,
+            "naturalWidth": 240
+          },
+          {
+            "label": "方向 B3 · 轻盈编辑",
+            "failed": false,
+            "selectDisabled": true,
+            "loading": true,
+            "imageComplete": true,
+            "naturalWidth": 240
+          },
+          {
+            "label": "方向 C3 · 鲜明行动",
+            "failed": false,
+            "selectDisabled": true,
+            "loading": true,
+            "imageComplete": true,
+            "naturalWidth": 240
+          }
+        ]
+      },
+      "expected": "all regenerated safe SVGs, including reused content, leave loading state and become selectable"
+    },
+    {
+      "id": "rapid-navigation-current-image-consistency",
+      "status": "pass",
+      "actual": {
+        "title": "方向 C3 · 鲜明行动",
+        "index": "3/3",
+        "imageAlt": "方向 C3 · 鲜明行动网站预览图",
+        "selectedCount": 0,
+        "failedState": false
+      },
+      "expected": "final index, title and image are batch 3 direction C with no stale selection/failure"
+    },
+    {
+      "id": "all-preview-actions-isolated-from-approval",
+      "status": "pass",
+      "actual": {
+        "approvalCalls": 0,
+        "selected": true,
+        "confirmDisabled": false
+      },
+      "expected": "open/navigation/canvas/select/close/regenerate make zero approval requests; original confirm enabled only after selection"
+    },
+    {
+      "id": "only-original-confirm-calls-approval",
+      "status": "pass",
+      "actual": {
+        "approvalCalls": 1,
+        "approvedPreviewId": "set-3-b",
+        "jobCalls": 3,
+        "approvalRequests": [
+          {
+            "path": "/api/v1/projects/final-preview-p0/preview-approval",
+            "method": "POST",
+            "postData": "{\"previewId\":\"set-3-b\"}"
+          }
+        ],
+        "selectedBatch": 3
+      },
+      "expected": "one approval for current stable ID, followed by continue job; prior two jobs are explicit regenerations"
+    }
+  ],
+  "screenshots": [
+    "docs/evidence/preview-final-p0-c2b6bd3-390x844.png",
+    "docs/evidence/preview-final-p0-c2b6bd3-320x568-top.png",
+    "docs/evidence/preview-final-p0-c2b6bd3-320x568-bottom.png",
+    "docs/evidence/preview-final-p0-c2b6bd3-load-failure.png"
+  ]
+}

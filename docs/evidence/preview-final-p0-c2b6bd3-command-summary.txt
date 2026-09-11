@@ -1,0 +1,45 @@
+Preview capability final independent P0 acceptance
+Date: 2026-09-12 Asia/Shanghai
+Remote baseline: c2b6bd391a764b7efc73105180d1a8a8d2dcb38f
+Business baseline: 2f178fae00cb49746b9ee24b924d35d1fa077c8d
+
+Baseline verification
+- git fetch origin --prune: pass
+- HEAD == origin/main == c2b6bd391a764b7efc73105180d1a8a8d2dcb38f: pass
+- worktree before acceptance artifacts: clean
+
+Independent browser execution
+- Chrome 152.0.7977.83 / CDP 1.3 / isolated disposable loopback profile: pass
+- local production process and CDP ready: pass
+- 320x568, 390x844, 768x1024, 844x390: executed
+- CDP mouse, keyboard, trusted touch events, reduced-motion and Chromium AX tree: executed
+- final-preview-p0.mjs: 23 pass, 3 fail
+- failures: Esc focus return, explicit-close focus return, cached reused SVGs can remain loading
+- preview-approval requests before original confirm: 0
+- preview-approval requests from original confirm: 1, current stable ID set-3-b
+
+Independent SVG and Runner harness
+- final-preview-static.mjs: 11/11 assertions pass
+- adversarial SVG matrix: 70/70 rejected
+- SMIL resource-mutation subset: 48/48 rejected
+- passive compatibility matrix: 9/9 accepted
+- generated batch: 3 SVG, 3 unique IDs, one set ID
+- repeated historical read: byte hashes unchanged
+- stale first Runner validation: rejected
+- batch replacement between first/second Runner validation: second read rejected
+
+Repository validation
+- apps/web npm run lint: pass
+- apps/web node --test tests/*.test.mjs: 25/25 pass
+- apps/web npm run build: pass
+- packages/codegen npm test: 48/48 pass, 0 failed/cancelled
+- packages/mobile-spec npm test: 4/4 pass
+- node scripts/check-docs.mjs: 34 documentation files pass
+- git diff --check: pass
+
+Evidence boundary
+- Real authenticated production data: unavailable; local sign-in route returned 404
+- Physical touch device: unavailable; CDP touch emulation does not replace it
+- Real VoiceOver: unavailable; Chromium AX tree does not replace it
+- Implementer screenshots/results used as acceptance evidence: no
+- Publishing or deployment performed: no

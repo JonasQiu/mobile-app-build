@@ -1,0 +1,120 @@
+{
+  "generatedAt": "2026-09-11T16:36:32.366Z",
+  "browser": "Chrome/152.0.7977.83",
+  "protocolVersion": "1.3",
+  "cdpLoopbackOnly": true,
+  "freshDisposableProfile": true,
+  "target": "http://127.0.0.1:52272/",
+  "viewports": [
+    {
+      "viewport": {
+        "width": 320,
+        "height": 568
+      },
+      "navigationError": "",
+      "page": {
+        "href": "http://127.0.0.1:52272/signin-with-chatgpt?return_to=%2F",
+        "origin": "http://127.0.0.1:52272",
+        "readyState": "complete",
+        "title": "404: This page could not be found.",
+        "innerWidth": 320,
+        "innerHeight": 568,
+        "devicePixelRatio": 1,
+        "maxTouchPoints": 5,
+        "coarsePointer": true,
+        "touchEventAvailable": true
+      },
+      "documentResponses": [
+        {
+          "url": "http://127.0.0.1:52272/signin-with-chatgpt?return_to=%2F",
+          "status": 404,
+          "mimeType": "text/html",
+          "fromDiskCache": false,
+          "fromServiceWorker": false
+        }
+      ],
+      "finalDocument": {
+        "url": "http://127.0.0.1:52272/signin-with-chatgpt?return_to=%2F",
+        "status": 404,
+        "mimeType": "text/html",
+        "fromDiskCache": false,
+        "fromServiceWorker": false
+      },
+      "capabilities": {
+        "deviceMetricsOverride": true,
+        "touchEmulation": true,
+        "keyboardDispatch": true,
+        "accessibilityTree": true
+      },
+      "accessibility": {
+        "nodeCount": 12,
+        "roles": {
+          "generic": 2,
+          "heading": 2,
+          "InlineTextBox": 2,
+          "RootWebArea": 1,
+          "StaticText": 2
+        }
+      }
+    },
+    {
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "navigationError": "",
+      "page": {
+        "href": "http://127.0.0.1:52272/signin-with-chatgpt?return_to=%2F",
+        "origin": "http://127.0.0.1:52272",
+        "readyState": "complete",
+        "title": "404: This page could not be found.",
+        "innerWidth": 390,
+        "innerHeight": 844,
+        "devicePixelRatio": 1,
+        "maxTouchPoints": 5,
+        "coarsePointer": true,
+        "touchEventAvailable": true
+      },
+      "documentResponses": [
+        {
+          "url": "http://127.0.0.1:52272/signin-with-chatgpt?return_to=%2F",
+          "status": 404,
+          "mimeType": "text/html",
+          "fromDiskCache": false,
+          "fromServiceWorker": false
+        }
+      ],
+      "finalDocument": {
+        "url": "http://127.0.0.1:52272/signin-with-chatgpt?return_to=%2F",
+        "status": 404,
+        "mimeType": "text/html",
+        "fromDiskCache": false,
+        "fromServiceWorker": false
+      },
+      "capabilities": {
+        "deviceMetricsOverride": true,
+        "touchEmulation": true,
+        "keyboardDispatch": true,
+        "accessibilityTree": true
+      },
+      "accessibility": {
+        "nodeCount": 12,
+        "roles": {
+          "generic": 2,
+          "heading": 2,
+          "InlineTextBox": 2,
+          "RootWebArea": 1,
+          "StaticText": 2
+        }
+      }
+    }
+  ],
+  "environmentCapabilities": {
+    "modernCdp": true,
+    "viewport320x568": true,
+    "viewport390x844": true,
+    "touchEmulation": true,
+    "keyboardDispatch": true,
+    "accessibilityTree": true
+  }
+}
